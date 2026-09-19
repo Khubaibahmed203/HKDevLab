@@ -59,7 +59,9 @@ export function initChrome({ lenis, reduce }) {
   }
   burger.addEventListener('click', () => (menu.hidden ? openMenu() : closeMenu()));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeMenu(); burger.focus(); } });
-  matchMedia('(min-width: 900px)').addEventListener('change', (e) => e.matches && closeMenu());
+  const wide = matchMedia('(min-width: 900px)');
+  const onWide = (e) => e.matches && closeMenu();
+  if (wide.addEventListener) wide.addEventListener('change', onWide); else if (wide.addListener) wide.addListener(onWide);   // Safari < 14
 
   // glass-card spotlight follows the pointer
   $$('[data-spot]').forEach((card) => {

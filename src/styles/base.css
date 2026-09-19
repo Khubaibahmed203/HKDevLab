@@ -33,7 +33,7 @@ body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 400 1rem/1.6 var(--f-body);
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-  overflow-x: clip;
+  overflow-x: hidden; overflow-x: clip;     /* `clip` keeps position:sticky working; older Safari falls back to hidden */
 }
 img, svg { display: block; max-width: 100%; }
 a { color: inherit; text-decoration: none; }
@@ -80,7 +80,7 @@ h3 { font: 600 1.35rem/1.2 var(--f-display); letter-spacing: -.02em; }
 .btn:hover { transform: translateY(-2px); box-shadow: 0 0 0 1px rgba(255,255,255,.2) inset, 0 16px 50px -6px rgba(29,228,255,.6); filter: brightness(1.06); }
 .btn:hover svg { transform: translateX(4px); }
 .btn:active { transform: translateY(0) scale(.98); }
-.btn--ghost { color: var(--ink); background: rgba(255,255,255,.04); box-shadow: 0 0 0 1px var(--line) inset; backdrop-filter: blur(8px); }
+.btn--ghost { color: var(--ink); background: rgba(255,255,255,.04); box-shadow: 0 0 0 1px var(--line) inset; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
 .btn--ghost:hover { background: rgba(18,166,255,.12); box-shadow: 0 0 0 1px rgba(29,228,255,.5) inset; filter: none; }
 .btn--sm { --h: 44px; padding: 0 1.3em; font-size: .85rem; }
 .btn--block { width: 100%; }
@@ -128,7 +128,7 @@ main, .foot { position: relative; z-index: 1; }
 .hdr__burger[aria-expanded="true"] span:nth-child(2) { top: 20px; transform: rotate(-45deg); }
 
 .menu {
-  position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.94); backdrop-filter: blur(18px);
+  position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.94); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
   display: flex; flex-direction: column; justify-content: center; padding: 96px var(--gutter) 40px; gap: 40px;
 }
 .menu[hidden] { display: none; }
@@ -142,10 +142,8 @@ main, .foot { position: relative; z-index: 1; }
 }
 @media (min-width: 900px) { .menu { display: none !important; } }
 
-/* ───── reveal helpers (JS sets initial state, so no-JS stays visible) ───── */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
-}
+/* ───── animations off: only when the visitor chose it (footer switch) ───── */
+.motion-off *, .motion-off *::before, .motion-off *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 
 /* ───── failsafes for devices where the animation code cannot run ───── */
 .boot { animation: bootFailsafe .5s 14s forwards; }             /* even if scripts die, the preloader never blocks the site */
@@ -154,3 +152,24 @@ main, .foot { position: relative; z-index: 1; }
 .no-anim [style*="opacity"] { opacity: 1 !important; }         /* undo any half-applied "hidden until animated" state */
 .no-anim [style*="visibility"] { visibility: visible !important; }
 .no-anim .wordmark i, .no-anim .hdr, .no-anim .chip span, .no-anim .hero__lower > *, .no-anim .hero__side li { transform: none !important; filter: none !important; }
+
+/* ───── animation switch (footer) + note for devices that ask for reduced motion ───── */
+.motion-toggle { margin-top: 6px; padding: 8px 14px; border-radius: 999px; cursor: pointer; font: 500 .74rem/1 var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: transparent; border: 1px solid var(--line); transition: color .25s, border-color .25s; }
+.motion-toggle:hover { color: var(--cyan); border-color: rgba(29, 228, 255, .5); }
+.motion-toggle[hidden] { display: none; }
+.motion-pill {
+  position: fixed; z-index: 150; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100vw - 24px); padding: 8px 8px 8px 16px; border-radius: 999px;
+  font: 500 .78rem/1.3 var(--f-body); color: var(--ink); background: rgba(6, 12, 24, .92); border: 1px solid rgba(120, 180, 255, .3); box-shadow: 0 10px 40px rgba(0, 0, 0, .5);
+}
+.motion-pill__go, .motion-pill__x { cursor: pointer; border: 0; border-radius: 999px; font: 600 .74rem/1 var(--f-display); }
+.motion-pill__go { padding: 9px 14px; color: #00131f; background: var(--grad); white-space: nowrap; }
+.motion-pill__x { width: 32px; height: 32px; font-size: 1.2rem; color: var(--muted); background: rgba(255, 255, 255, .06); }
+@media (max-width: 520px) { .motion-pill { border-radius: 18px; flex-wrap: wrap; justify-content: center; width: calc(100vw - 24px); padding-left: 14px; } .motion-pill span { flex: 1 1 100%; text-align: center; } }
+
+/* ───── lite mode: same scenes, without the GPU-hungry extras (weak devices / measured slow frames) ───── */
+.is-lite .wordmark, .is-lite .hero__wm, .is-lite .dial__num span, .is-lite .mock__art .orb { filter: none !important; }
+.is-lite .hdr.is-solid, .is-lite .btn--ghost, .is-lite .menu { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.is-lite .hdr.is-solid { background: rgba(0, 0, 0, .92); }
+.is-lite .tile, .is-lite .card, .is-lite .step, .is-lite .form, .is-lite .slide .mock { box-shadow: none; }
+.is-lite .tile--hot { box-shadow: 0 0 18px rgba(29, 228, 255, .25); }

@@ -129,6 +129,22 @@ PostgreSQL database (tables are created automatically). On a VPS or a persistent
 Your local database and the production database are separate: the admin account you make locally does not exist online —
 create the real one on the live site.
 
+## The animation on every device
+
+The cinematic scenes (hero, stack fly-through, process dial, 3D work ring) run on **every** screen — desktops, laptops, tablets and
+phones. Only the composition changes: `src/styles/sections.css` re-arranges each scene for portrait phones/tablets
+(`max-width: 899px`), short screens such as phones held sideways (`max-height: 560px`) and short laptops.
+The four pinned scenes use native CSS `position: sticky` (smooth on iOS/Android) driven by GSAP `scrub`.
+
+- **Reduce-motion devices:** animations are ON by default for everyone. A visitor whose device asks for reduced motion sees a small
+  one-time note offering to turn them off, and the footer has an "Animations: on/off" switch for all visitors. The choice is
+  remembered in the browser. `?motion=on` / `?motion=off` in the address sets it directly (useful for testing).
+- **Slow devices:** weak hardware (≤ 2 GB memory / ≤ 2 cores / data-saver) starts in *lite* mode, and any device that can't hold
+  ~25 fps while scrolling switches to it automatically. Lite keeps every scene and the 3D depth but drops blur filters, glass
+  backdrop-blur, big glows and the busy dot-field.
+- **Old browsers:** JS is compiled for Safari 13 / Chrome 80 / Firefox 78 and up, CSS has fallbacks (`vh` for `svh`, pixel units for
+  `cqw`, plain colours for `color-mix`). If anything still fails, `safeMode()` in `src/main.js` shows the plain readable site instead of a dead page.
+
 ## Security
 
 Passwords hashed with scrypt · server-side sessions in HttpOnly, SameSite=Strict (+ Secure in production) cookies, only a

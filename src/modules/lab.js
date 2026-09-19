@@ -1,4 +1,5 @@
 import gsap from 'gsap';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -36,14 +37,16 @@ export function labReveal() {
     scrollTrigger: { trigger: '#statement', start: 'top 82%', end: 'bottom 45%', scrub: 0.5 },
   });
 
-  gsap.from('.card', {
-    y: 60, opacity: 0, duration: 1, stagger: 0.1, ease: 'power3.out', clearProps: 'transform,opacity',
-    scrollTrigger: { trigger: '#services', start: 'top 85%' },
-  });
-  gsap.from('#principles li', {
-    y: 30, opacity: 0, duration: 0.9, stagger: 0.09, ease: 'power3.out', clearProps: 'transform,opacity',
-    scrollTrigger: { trigger: '#principles', start: 'top 90%' },
-  });
+  // one trigger per item, so a stacked (phone) layout reveals each card as IT arrives — not all at once from the top
+  const rise = (sel, y, stagger) => {
+    gsap.set(sel, { y, opacity: 0 });
+    ScrollTrigger.batch(sel, {
+      start: 'top 92%', once: true,
+      onEnter: (els) => gsap.to(els, { y: 0, opacity: 1, duration: 0.95, stagger, ease: 'power3.out', overwrite: true, clearProps: 'transform,opacity' }),
+    });
+  };
+  rise('.card', 60, 0.1);
+  rise('#principles li', 30, 0.09);
   gsap.from('.universe__cap > *', {
     y: 30, opacity: 0, duration: 1, stagger: 0.12, ease: 'power3.out',
     scrollTrigger: { trigger: '.universe', start: 'top 70%' },
@@ -51,7 +54,7 @@ export function labReveal() {
 }
 
 /**
- * Wide screens: the stack flies past the camera. Each tile lives at a depth
+ * The stack flies past the camera (every screen size). Each tile lives at a depth
  * (data-z); scrolling pushes the whole scene forward, and opacity is derived
  * from each tile's distance to the camera so tiles emerge from the dark and
  * dissolve as they pass.

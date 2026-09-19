@@ -12,17 +12,22 @@ import { initField } from './modules/field.js';
 import { initChrome } from './modules/chrome.js';
 import { heroIntro, heroScroll } from './modules/hero.js';
 import { labReveal, labUniverse } from './modules/lab.js';
-import { processScene, processReveal } from './modules/process.js';
+import { processScene } from './modules/process.js';
 import { buildWork, workScene } from './modules/work.js';
 import { initContact, contactReveal } from './modules/contact.js';
+import { motionPlan, initMotionUI } from './modules/motion.js';
+import { isWeakDevice, watchPerformance } from './modules/perf.js';
 import { applyContent } from './render.js';
 import defaults from '../content/default.json';
 
 gsap.registerPlugin(ScrollTrigger);
+ScrollTrigger.config({ ignoreMobileResize: true });   // a phone's address bar sliding in/out must not rebuild the scenes
 
 const $ = (s, r = document) => r.querySelector(s);
-const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-document.documentElement.classList.add('js');     // shows the preloader straight away, before content loads
+const html = document.documentElement;
+const plan = motionPlan();                            // animations are on for everyone unless the visitor turned them off
+html.classList.add('js', plan.on ? 'motion-on' : 'motion-off');
+if (isWeakDevice()) html.classList.add('is-lite');    // same show, without the GPU-hungry extras
 
 /* ───── compatibility: older phones and browsers ───── */
 if (!Element.prototype.replaceChildren) {            // Safari < 14, Chrome < 86
@@ -36,8 +41,7 @@ const timeoutSignal = (ms) => {                      // AbortSignal.timeout need
 /* If anything at all goes wrong on some device, show the plain site (all content, no animation) instead of a dead page. */
 function safeMode(err) {
   console.error('[hkdevlab] falling back to the plain site:', err);
-  const h = document.documentElement;
-  h.classList.remove('is-cinema'); h.classList.add('no-anim');
+  html.classList.remove('is-cinema', 'is-compact', 'is-short'); html.classList.add('no-anim');
   const boot = document.getElementById('boot'); if (boot) boot.remove();
 }
 
@@ -60,32 +64,39 @@ async function start() {
   history.scrollRestoration = 'manual';
   window.scrollTo(0, 0);
 
-  const lenis = reduce ? null : initSmooth();
-  initField($('#field'), { animate: !reduce });
-  initChrome({ lenis, reduce });
+  const lenis = plan.on ? initSmooth() : null;
+  const field = initField($('#field'), { animate: plan.on, lite: html.classList.contains('is-lite') });
+  initChrome({ lenis, reduce: !plan.on });
+  initMotionUI(plan);
 
-  /* Wide screens with motion allowed get the pinned / 3D "cinema" layout.
-     Everything else keeps the simple stacked layout the CSS starts with.
-     gsap.matchMedia builds and tears these down cleanly on resize. */
   buildWork(content.work.items);
   initContact(content.contact);
-  const mm = gsap.matchMedia();
-  mm.add('(min-width: 900px) and (prefers-reduced-motion: no-preference)', () => {
-    const root = document.documentElement;
-    root.classList.add('is-cinema');
-    heroScroll();
-    const off = labUniverse();
-    processScene();
-    const offWork = workScene();
-    return () => { off(); offWork(); root.classList.remove('is-cinema'); };
-  });
-  mm.add('(prefers-reduced-motion: no-preference)', () => { labReveal(); contactReveal(); });
-  mm.add('(max-width: 899px) and (prefers-reduced-motion: no-preference)', () => { processReveal(); });
+
+  /* The cinema runs on EVERY screen: desktops, laptops, tablets and phones. Only the composition changes
+     (CSS re-arranges each scene for portrait / short screens). gsap.matchMedia rebuilds it cleanly when the
+     screen crosses a breakpoint or is rotated. */
+  if (plan.on) {
+    const mm = gsap.matchMedia();
+    mm.add({ all: true, compact: '(max-width: 899px)', short: '(max-height: 560px)' }, (ctx) => {   // `all` = always run, whatever the screen
+      const { compact, short } = ctx.conditions;
+      html.classList.add('is-cinema');
+      html.classList.toggle('is-compact', compact);
+      html.classList.toggle('is-short', short);
+      heroScroll();
+      const off = labUniverse();
+      processScene();
+      const offWork = workScene();
+      labReveal();
+      contactReveal();
+      return () => { off(); offWork(); html.classList.remove('is-cinema', 'is-compact', 'is-short'); };
+    });
+    watchPerformance(() => field.lite());
+  }
 
   /* ───── boot → intro ───── */
   async function boot() {
     const bootEl = $('#boot');
-    if (reduce) { bootEl.remove(); return; }
+    if (!plan.on) { bootEl.remove(); return; }
     if (lenis) lenis.stop();
     const t0 = performance.now();
     gsap.to('#bootFill', { scaleX: 0.85, duration: 1.2, ease: 'power2.out' });

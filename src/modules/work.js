@@ -22,11 +22,15 @@ const KIND = {
     <div class="dash__main"><div class="dash__kpis">${(w.kpis || []).map((k) => `<div><small>${esc(k.label)}</small>${esc(k.value)}</div>`).join('')}</div>
     <div class="dash__chart">${(w.bars || []).map((n) => `<i style="height:${Math.min(100, Math.max(4, +n || 0))}%"></i>`).join('')}</div></div></div>`,
   chat: (w) => `${bar(w.url)}<div class="mock__body">${(w.chat || []).map((m) => `<div class="bub${m.mine ? ' bub--me' : ''}">${esc(m.text)}</div>`).join('')}<div class="bub bub--typing">${dots}</div></div>`,
-  shop: (w) => `${bar(w.url)}<div class="mock__body">${nav(first(w), w.nav, 'Cart')}<p class="mock__t" style="margin-top:5cqw">${br(w.title)}</p>
+  shop: (w) => `${bar(w.url)}<div class="mock__body">${nav(first(w), w.nav, 'Cart')}<p class="mock__t" style="margin-top:calc(5 * var(--u))">${br(w.title)}</p>
     <div class="shop__row"><div class="shop__p"></div><div class="shop__p"></div><div class="shop__p"></div><div class="shop__p"></div></div></div>`,
 };
 
 let WORK = [];
+
+/* Browsers without container-query units (Chrome < 105, Safari < 16) get the same sizes from a per-slide pixel unit. */
+const HAS_CQ = typeof CSS !== 'undefined' && CSS.supports && CSS.supports('width', '1cqw');
+function sizeUnits() { if (!HAS_CQ) $$('.slide').forEach((s) => s.style.setProperty('--u', (s.offsetWidth / 100) + 'px')); }
 
 /** Builds the concept slides (used by both the 3D ring and the mobile swipe list). */
 export function buildWork(items) {
@@ -38,10 +42,12 @@ export function buildWork(items) {
       <div class="slide__cap"><h3>${esc(w.name)}</h3><p>${esc(w.meta)}</p></div>
     </li>`).join('');
   $('#workTot').textContent = String(WORK.length).padStart(2, '0');
+  sizeUnits();
+  if (!HAS_CQ) window.addEventListener('resize', sizeUnits);
 }
 
 /**
- * Wide screens: pinned 3D carousel. Cards sit on a cylinder; scroll rotates it.
+ * Pinned 3D carousel (every screen size). Cards sit on a cylinder; scroll rotates it.
  * --d (0 front … 1 far) drives each card's dimming so the ring reads as depth.
  */
 export function workScene() {
@@ -52,9 +58,11 @@ export function workScene() {
   let R = 900;
 
   slides.forEach((s, i) => s.style.setProperty('--i', i));
+  $('#work').style.setProperty('--len', n);             // scroll length the sticky stage stays put for
   inner.style.setProperty('--step', `${step}deg`);
 
   const layout = () => {
+    sizeUnits();
     R = (inner.offsetWidth / 2) / Math.tan(Math.PI / n) * 1.14;
     inner.style.setProperty('--R', `${R}px`);
     render(state.rot);
@@ -87,7 +95,7 @@ export function workScene() {
   gsap.to(state, {
     rot: -step * (n - 1), ease: 'none',
     onUpdate: () => render(state.rot),
-    scrollTrigger: { trigger: '#work', pin: '#workPin', start: 'top top', end: `+=${n * 60}%`, scrub: 0.7, anticipatePin: 1, refreshPriority: 1 },
+    scrollTrigger: { trigger: '#work', start: 'top top', end: 'bottom bottom', scrub: 0.7 },     // stage is CSS-sticky (sections.css)
   });
 
   return () => window.removeEventListener('resize', layout);

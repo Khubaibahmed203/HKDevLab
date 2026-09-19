@@ -3,17 +3,20 @@
  * ripple with a slow wave, swell and scatter around the pointer, and drift
  * with the page scroll. Quantised into a few alpha buckets so each frame is
  * a handful of fills rather than thousands of style changes.
+ * Lite mode (slow devices) redraws only every few frames.
  */
 const BUCKETS = 8;
 const GAP = 38;
 
-export function initField(canvas, { animate = true } = {}) {
+export function initField(canvas, { animate = true, lite = false } = {}) {
   const ctx = canvas.getContext('2d', { alpha: true });
   const mouse = { x: -9999, y: -9999, sx: -9999, sy: -9999, active: false };
-  let w = 0, h = 0, dpr = 1, cols = 0, rows = 0, raf = 0, running = false;
+  let w = 0, h = 0, dpr = 1, cols = 0, rows = 0, raf = 0, running = false, isLite = lite, skip = lite ? 4 : 1, frame = 0;
 
   function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+    // phones: the address bar sliding in and out changes innerHeight by ~60–120px — not worth re-allocating the canvas
+    if (w && window.innerWidth === w && Math.abs(window.innerHeight - h) < 160) return;
+    dpr = Math.min(window.devicePixelRatio || 1, isLite ? 1 : 1.75);
     w = window.innerWidth; h = window.innerHeight;
     canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -54,7 +57,7 @@ export function initField(canvas, { animate = true } = {}) {
     ctx.fill(hot);
   }
 
-  function loop(t) { draw(t); raf = requestAnimationFrame(loop); }
+  function loop(t) { if (++frame % skip === 0) draw(t); raf = requestAnimationFrame(loop); }
   function start() { if (!running) { running = true; raf = requestAnimationFrame(loop); } }
   function stop() { running = false; cancelAnimationFrame(raf); }
 
@@ -70,5 +73,8 @@ export function initField(canvas, { animate = true } = {}) {
     document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
     start();
   }
-  return { stop, start };
+  return {
+    stop, start,
+    lite() { isLite = true; skip = 4; if (dpr > 1) { w = 0; resize(); } },     // called when the device turns out to be slow
+  };
 }

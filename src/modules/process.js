@@ -26,7 +26,7 @@ function buildTicks(n) {
 }
 
 /**
- * Wide screens: one pinned scene. Scroll drives a single timeline — the dial
+ * One pinned scene (every screen size).  Scroll drives a single timeline — the dial
  * clicks 72° per stage, the big numeral and copy swap, the rail fills.
  */
 export function processScene() {
@@ -36,14 +36,15 @@ export function processScene() {
   const n = steps.length;
   const deg = 360 / n;                                  // the dial turns one stage per step
   buildTicks(n);
+  $('#process').style.setProperty('--len', n);         // scroll length the sticky stage stays put for
 
   gsap.set(steps.slice(1), { opacity: 0, y: 44 });
   gsap.set(steps.slice(1), { pointerEvents: 'none' });
 
   const tl = gsap.timeline({
     defaults: { ease: 'none' },
-    // refreshPriority: pins measure first so triggers created later (nav) see the pin spacing
-    scrollTrigger: { trigger: '#process', pin: '#processPin', start: 'top top', end: `+=${n * 84}%`, scrub: 0.6, anticipatePin: 1, refreshPriority: 1 },
+    // the section is n × 84% of a screen taller than the screen and its stage is CSS-sticky (see sections.css)
+    scrollTrigger: { trigger: '#process', start: 'top top', end: 'bottom bottom', scrub: 0.6 },
     onUpdate: sync,
   });
   tl.set({}, {}, n);   // fixed length: stage i owns [i, i+1]
@@ -68,12 +69,4 @@ export function processScene() {
     steps.forEach((s, i) => { s.style.pointerEvents = i === idx ? 'auto' : 'none'; s.toggleAttribute('data-active', i === idx); });
   }
   sync();
-}
-
-/** Phones / tablets: the stacked cards simply rise in. */
-export function processReveal() {
-  gsap.from('.step', {
-    y: 44, opacity: 0, duration: 0.9, stagger: 0.12, ease: 'power3.out', clearProps: 'transform,opacity',
-    scrollTrigger: { trigger: '#steps', start: 'top 85%' },
-  });
 }
