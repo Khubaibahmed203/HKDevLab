@@ -146,3 +146,11 @@ main, .foot { position: relative; z-index: 1; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 }
+
+/* ───── failsafes for devices where the animation code cannot run ───── */
+.boot { animation: bootFailsafe .5s 14s forwards; }             /* even if scripts die, the preloader never blocks the site */
+@keyframes bootFailsafe { to { opacity: 0; visibility: hidden; pointer-events: none; } }
+.no-anim .boot { display: none; }
+.no-anim [style*="opacity"] { opacity: 1 !important; }         /* undo any half-applied "hidden until animated" state */
+.no-anim [style*="visibility"] { visibility: visible !important; }
+.no-anim .wordmark i, .no-anim .hdr, .no-anim .chip span, .no-anim .hero__lower > *, .no-anim .hero__side li { transform: none !important; filter: none !important; }
