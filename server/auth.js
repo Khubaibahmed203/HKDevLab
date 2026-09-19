@@ -31,27 +31,12 @@ export function passwordProblem(pw, email) {
   return null;
 }
 
-/* ───────────── tiny failure counter (login brute-force protection) ───────────── */
-function failureCounter() {
-  const m = new Map();
-  const recent = (k, win) => (m.get(k) || []).filter((t) => Date.now() - t < win);
-  return {
-    blocked: (k, max, win) => recent(k, win).length >= max,
-    add: (k, win) => m.set(k, [...recent(k, win), Date.now()]),
-    clear: (k) => m.delete(k),
-    sweep: () => { for (const k of m.keys()) if (!recent(k, 3_600_000).length) m.delete(k); },
-  };
-}
-
 /* ───────────── sessions ───────────── */
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 export const parseCookies = (h = '') => Object.fromEntries(h.split(';').map((c) => c.trim().split(/=(.*)/s).slice(0, 2)).filter(([k]) => k));
 
-export function createAuth(store, { isProd, originAllowed, hashIp }) {
-  const fails = failureCounter();
-  setInterval(fails.sweep, 600_000).unref();
+export function createAuth(store, { isProd, originAllowed, hashIp, limiter }) {
   const WIN = 15 * 60_000;
-  let settingUp = false;                                       // serialises the "first account" race
 
   const setCookie = (res, token, maxAgeSec) =>
     res.append('Set-Cookie', `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSec}${isProd ? '; Secure' : ''}`);
@@ -94,13 +79,6 @@ export function createAuth(store, { isProd, originAllowed, hashIp }) {
     next();
   }
 
-  /** Runs `fn` only if no other setup is in flight (used by password AND Google first-account setup). */
-  async function withSetupLock(fn) {
-    if (settingUp) return { locked: true };
-    settingUp = true;
-    try { return { value: await fn() }; } finally { settingUp = false; }
-  }
-
   const asyncH = (fn) => (req, res, next) => fn(req, res, next).catch(next);
   const cleanName = (v) => String(v ?? '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
   const cleanEmail = (v) => String(v ?? '').trim().toLowerCase();
@@ -123,36 +101,33 @@ export function createAuth(store, { isProd, originAllowed, hashIp }) {
   // First account ever → admin. Closed permanently once any user exists.
   router.post('/setup', asyncH(async (req, res) => {
     const ip = `setup:${hashIp(req.ip)}`;
-    if (fails.blocked(ip, 8, WIN)) return res.status(429).json({ ok: false, error: 'Too many attempts. Try again later.' });
-    if (settingUp || (await store.userCount()) > 0) return res.status(403).json({ ok: false, error: 'Setup has already been completed. Please sign in.' });
+    if (await limiter.blocked(ip, 8, WIN)) return res.status(429).json({ ok: false, error: 'Too many attempts. Try again later.' });
+    if ((await store.userCount()) > 0) return res.status(403).json({ ok: false, error: 'Setup has already been completed. Please sign in.' });
     const need = process.env.SETUP_TOKEN;
     if (need) {
       const given = Buffer.from(String(req.body?.token ?? '')), want = Buffer.from(need);
-      if (given.length !== want.length || !timingSafeEqual(given, want)) { fails.add(ip, WIN); return res.status(403).json({ ok: false, errors: { token: 'That setup key is not correct.' } }); }
+      if (given.length !== want.length || !timingSafeEqual(given, want)) { await limiter.fail(ip); return res.status(403).json({ ok: false, errors: { token: 'That setup key is not correct.' } }); }
     }
     const errors = validateAccount(req.body || {});
     if (Object.keys(errors).length) return res.status(400).json({ ok: false, errors });
 
-    if (settingUp) return res.status(403).json({ ok: false, error: 'Setup is already in progress.' });
-    settingUp = true;                                          // check + set with no await between = atomic
-    try {
-      if ((await store.userCount()) > 0) return res.status(403).json({ ok: false, error: 'Setup has already been completed. Please sign in.' });
-      const id = await store.createUser({ email: cleanEmail(req.body.email), name: cleanName(req.body.name), passwordHash: await hashPassword(req.body.password), role: 'admin' });
-      await store.touchLogin(id);
-      await startSession(req, res, id);
-      res.status(201).json({ ok: true, user: await store.userById(id) });
-    } finally { settingUp = false; }
+    // One atomic INSERT … WHERE NOT EXISTS: of any number of simultaneous requests (even on different servers) exactly one wins.
+    const id = await store.createFirstUser({ email: cleanEmail(req.body.email), name: cleanName(req.body.name), passwordHash: await hashPassword(req.body.password), role: 'admin' });
+    if (!id) return res.status(403).json({ ok: false, error: 'Setup has already been completed. Please sign in.' });
+    await store.touchLogin(id);
+    await startSession(req, res, id);
+    res.status(201).json({ ok: true, user: await store.userById(id) });
   }));
 
   router.post('/login', asyncH(async (req, res) => {
     const email = cleanEmail(req.body?.email), pw = String(req.body?.password ?? '');
-    const ipK = `ip:${hashIp(req.ip)}`, emK = `em:${email}`;
-    if (fails.blocked(ipK, 10, WIN) || fails.blocked(emK, 5, WIN)) return res.status(429).json({ ok: false, error: 'Too many failed attempts. Please wait 15 minutes and try again.' });
+    const ipK = `ip:${hashIp(req.ip)}`, emK = `em:${hashIp(email)}`;
+    if ((await limiter.blocked(ipK, 10, WIN)) || (await limiter.blocked(emK, 5, WIN))) return res.status(429).json({ ok: false, error: 'Too many failed attempts. Please wait 15 minutes and try again.' });
     const row = email && pw.length <= 200 ? await store.userByEmail(email) : null;
     const usable = Boolean(row && String(row.password_hash).startsWith('scrypt:'));
     const ok = (await verifyPassword(pw, usable ? row.password_hash : DUMMY_HASH)) && usable;
-    if (!row || !ok) { fails.add(ipK, WIN); fails.add(emK, WIN); return res.status(401).json({ ok: false, error: 'Incorrect email or password.' }); }
-    fails.clear(emK);
+    if (!row || !ok) { await limiter.fail(ipK); await limiter.fail(emK); return res.status(401).json({ ok: false, error: 'Incorrect email or password.' }); }
+    await limiter.clear(emK);
     await store.touchLogin(row.id);
     await startSession(req, res, row.id);
     res.json({ ok: true, user: await store.userById(row.id) });
@@ -168,8 +143,8 @@ export function createAuth(store, { isProd, originAllowed, hashIp }) {
   router.post('/password', requireUser, asyncH(async (req, res) => {
     const row = await store.userWithHash(req.user.id);
     if (!req.user.hasPassword) return res.status(400).json({ ok: false, error: 'Your account signs in with Google, so it has no password to change.' });
-    if (fails.blocked(`pw:${req.user.id}`, 5, WIN)) return res.status(429).json({ ok: false, error: 'Too many attempts. Please wait a few minutes.' });
-    if (!(await verifyPassword(String(req.body?.current ?? ''), row.password_hash))) { fails.add(`pw:${req.user.id}`, WIN); return res.status(400).json({ ok: false, errors: { current: 'Your current password is not correct.' } }); }
+    if (await limiter.blocked(`pw:${req.user.id}`, 5, WIN)) return res.status(429).json({ ok: false, error: 'Too many attempts. Please wait a few minutes.' });
+    if (!(await verifyPassword(String(req.body?.current ?? ''), row.password_hash))) { await limiter.fail(`pw:${req.user.id}`); return res.status(400).json({ ok: false, errors: { current: 'Your current password is not correct.' } }); }
     const problem = passwordProblem(req.body?.next, req.user.email);
     if (problem) return res.status(400).json({ ok: false, errors: { next: problem } });
     await store.updateUser(req.user.id, { passwordHash: await hashPassword(req.body.next) });
@@ -222,5 +197,5 @@ export function createAuth(store, { isProd, originAllowed, hashIp }) {
     res.json({ ok: true });
   }));
 
-  return { authenticate, requireUser, requireAdmin, csrf, router, users, asyncH, startSession, withSetupLock, cleanName };
+  return { authenticate, requireUser, requireAdmin, csrf, router, users, asyncH, startSession, cleanName };
 }

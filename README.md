@@ -83,10 +83,32 @@ an enquiry (the Enquiries list shows a "notified / email not sent" badge).
 `MAIL_FROM="HK DevLab <website@hkdevlab.com>"`, `MAIL_TO=contact@hkdevlab.com` (Cloudflare forwards it to your inbox).
 Other mailboxes (Google Workspace `smtp.gmail.com:587` with an app password, Zoho `smtp.zoho.com:587`, …) work too.
 
+## Deploying on Vercel
+
+The same app also runs as a **Vercel Function**: `vercel.json` sends `/api/*` and `/admin*` to `api/index.js` (which wraps `server/app.js`) and
+serves the built site from Vercel's CDN. Because Vercel starts short-lived copies of the server with no shared memory or disk, the app keeps
+**everything shared in the database** — sessions, login lock-out, rate limits, the "first account" lock (one atomic SQL statement) and the
+site content — and sends emails *before* replying (a function is frozen once it responds). `node server/test-serverless.mjs` proves this with
+three independent copies sharing one database.
+
+1. **Database (required — Vercel has no persistent disk):** Vercel project → **Storage** → *Create Database* → **Neon (Postgres)** → connect it to
+   the project for all environments. This adds `DATABASE_URL` automatically.
+2. **Environment Variables** (Project → Settings → Environment Variables, all environments):
+   `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=465`, `SMTP_SECURE=true`, `SMTP_USER=resend`, `SMTP_PASS=<Resend key>` (mark *Sensitive*),
+   `MAIL_FROM="HK DevLab <website@hkdevlab.com>"`, `MAIL_TO=contact@hkdevlab.com`, plus two random values: `SETUP_TOKEN` and `IP_HASH_SALT`.
+   (`NODE_ENV=production` is set by Vercel itself.)
+3. **Redeploy** (Deployments → ⋯ → Redeploy), then check `https://<your-domain>/api/health` → `"ok": true` and `postgres`.
+4. Open `/admin`, enter the `SETUP_TOKEN`, and create your account — you become the admin.
+5. Send a test message through the contact form and confirm it appears under **Enquiries**.
+
+Known differences from running the Node server: the page's `<title>`/description in the raw HTML are the built-in defaults (edits are applied when the
+page loads, which Google's crawler also does); a request after a quiet period can take a second or two while a copy starts and Neon wakes.
+Note that Vercel's free *Hobby* plan is meant for non-commercial use — check their terms for a business site.
+
 ## Deploying on Render (recommended)
 
-The site, API and `/admin` are ONE Node server, so it needs a host that runs Node — not a static host (on static hosts such as
-Vercel/Netlify `/admin` and `/api/*` simply return 404 and the contact form cannot work).
+The site, API and `/admin` are ONE Node server. Purely static hosts (GitHub Pages, Netlify without functions) cannot run it:
+`/admin` and `/api/*` would return 404 and the contact form could not work.
 
 1. Create a PostgreSQL database (e.g. [Neon](https://neon.tech) free tier) and copy its connection string (`postgres://…`).
 2. Render dashboard → **New → Blueprint** → pick this GitHub repo. Render reads [`render.yaml`](render.yaml) and asks for the values

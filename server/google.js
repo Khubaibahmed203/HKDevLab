@@ -19,22 +19,14 @@ const b64url = (buf) => Buffer.from(buf).toString('base64url');
 const safeEqual = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && timingSafeEqual(x, y); };
 export const googleEnabled = () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 
-export function createGoogle(store, auth, { isProd, hashIp }) {
+export function createGoogle(store, auth, { isProd, hashIp, limiter }) {
   const AUTH_URL = process.env.GOOGLE_AUTH_URL || 'https://accounts.google.com/o/oauth2/v2/auth';
   const TOKEN_URL = process.env.GOOGLE_TOKEN_URL || 'https://oauth2.googleapis.com/token';
   const ISSUERS = ['https://accounts.google.com', 'accounts.google.com', process.env.GOOGLE_ISSUER].filter(Boolean);
   const { asyncH } = auth;
   const router = express.Router();
 
-  // tiny per-visitor limiter for the start / callback endpoints
-  const seen = new Map();
-  const limited = (key, max) => {
-    const now = Date.now();
-    const recent = (seen.get(key) || []).filter((t) => now - t < 15 * 60_000);
-    recent.push(now); seen.set(key, recent);
-    return recent.length > max;
-  };
-  setInterval(() => { const now = Date.now(); for (const [k, v] of seen) if (!v.some((t) => now - t < 900_000)) seen.delete(k); }, 600_000).unref();
+  const limited = (key, max) => limiter.take(key, max, 15 * 60_000);      // shared through the database, see limits.js
 
   const publicUrl = (req) => (process.env.PUBLIC_URL || '').replace(/\/$/, '')
     || (isProd ? `${req.protocol}://${req.get('x-forwarded-host') || req.get('host')}` : 'http://localhost:5180');
@@ -46,7 +38,7 @@ export function createGoogle(store, auth, { isProd, hashIp }) {
   /** 1) The admin page asks for a Google URL (POST so a setup key never appears in a URL). */
   router.post('/start', express.json({ limit: '2kb' }), auth.csrf, asyncH(async (req, res) => {
     if (!googleEnabled()) return res.status(404).json({ ok: false, error: 'Google sign-in is not set up.' });
-    if (limited(`gs:${hashIp(req.ip)}`, 20)) return res.status(429).json({ ok: false, error: 'Too many attempts. Please wait a few minutes.' });
+    if (await limited(`gs:${hashIp(req.ip)}`, 20)) return res.status(429).json({ ok: false, error: 'Too many attempts. Please wait a few minutes.' });
 
     const setup = (await store.userCount()) === 0;
     if (setup && process.env.SETUP_TOKEN && !safeEqual(req.body?.token ?? '', process.env.SETUP_TOKEN)) {
@@ -66,7 +58,7 @@ export function createGoogle(store, auth, { isProd, hashIp }) {
   router.get('/callback', asyncH(async (req, res) => {
     const fail = (code) => { stateCookie(res, '', 0); res.redirect(`/admin?auth_error=${code}`); };
     if (!googleEnabled()) return fail('google_off');
-    if (limited(`gc:${hashIp(req.ip)}`, 30)) return fail('too_many');
+    if (await limited(`gc:${hashIp(req.ip)}`, 30)) return fail('too_many');
     if (req.query.error) return fail(req.query.error === 'access_denied' ? 'denied' : 'google_failed');
 
     const state = String(req.query.state || ''), code = String(req.query.code || '');
@@ -109,15 +101,11 @@ export function createGoogle(store, auth, { isProd, hashIp }) {
     if (!user) {
       if ((await store.userCount()) > 0) return fail('not_invited');                                       // nobody signs themselves up
       if (!attempt.setupOk) return fail('setup_key');
-      const made = await auth.withSetupLock(async () => {                                                  // first account → admin (race-safe)
-        if ((await store.userCount()) > 0) return null;
-        const name = auth.cleanName(claims.name) || email.split('@')[0];
-        const id = await store.createUser({ email, name, passwordHash: '', role: 'admin' });
-        await store.linkGoogle(id, claims.sub);
-        return { id };
-      });
-      if (!made.value) return fail('not_invited');
-      user = made.value;
+      const name = auth.cleanName(claims.name) || email.split('@')[0];
+      const id = await store.createFirstUser({ email, name, passwordHash: '', role: 'admin' });      // atomic: only ever succeeds once
+      if (!id) return fail('not_invited');
+      await store.linkGoogle(id, claims.sub);
+      user = { id };
     }
 
     await store.touchLogin(user.id);

@@ -24,7 +24,7 @@ async function sqliteAdapter() {
     async exec(sql) { db.exec(sql); },
     async all(sql, p = []) { return db.prepare(sql).all(...p); },
     async run(sql, p = []) { return db.prepare(sql).run(...p).changes; },
-    async insert(sql, p = []) { return Number(db.prepare(sql).run(...p).lastInsertRowid); },
+    async insert(sql, p = []) { const r = db.prepare(sql).run(...p); return r.changes ? Number(r.lastInsertRowid) : null; },
     async close() { db.close(); },
   };
 }
@@ -42,7 +42,7 @@ async function pgAdapter(poolOrUrl) {
     async exec(sql) { await pool.query(sql); },
     async all(sql, p = []) { return (await pool.query(numbered(sql), p)).rows; },
     async run(sql, p = []) { return (await pool.query(numbered(sql), p)).rowCount; },
-    async insert(sql, p = []) { return Number((await pool.query(`${numbered(sql)} RETURNING id`, p)).rows[0].id); },
+    async insert(sql, p = []) { const rows = (await pool.query(`${numbered(sql)} RETURNING id`, p)).rows; return rows[0] ? Number(rows[0].id) : null; },
     async close() { await pool.end(); },
   };
 }
@@ -51,7 +51,7 @@ async function pgAdapter(poolOrUrl) {
 export async function createStore({ pool } = {}) {
   const db = pool ? await pgAdapter(pool) : process.env.DATABASE_URL ? await pgAdapter(process.env.DATABASE_URL) : await sqliteAdapter();
 
-  for (const ddl of [
+  await db.exec([
     `CREATE TABLE IF NOT EXISTS enquiries (
        id ${db.pk}, created_at TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, service TEXT NOT NULL,
        message TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'new', email_sent INTEGER NOT NULL DEFAULT 0,
@@ -65,13 +65,16 @@ export async function createStore({ pool } = {}) {
     `CREATE TABLE IF NOT EXISTS sessions (
        id ${db.pk}, user_id BIGINT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
        created_at TEXT NOT NULL, expires_at TEXT NOT NULL, user_agent TEXT)`,
+    `CREATE TABLE IF NOT EXISTS rate_events (
+       id ${db.pk}, k TEXT NOT NULL, ts BIGINT NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS idx_rate_events ON rate_events (k, ts)',
     `CREATE TABLE IF NOT EXISTS content (
        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`,
     `CREATE TABLE IF NOT EXISTS content_versions (
        id ${db.pk}, created_at TEXT NOT NULL, user_email TEXT, note TEXT, value TEXT NOT NULL)`,
-  ]) await db.exec(ddl);
+  ].join(';\n'));
   // databases created before Google sign-in existed lack this column
-  try { await db.exec('ALTER TABLE users ADD COLUMN google_sub TEXT'); } catch { /* already there */ }
+  try { await db.exec(`ALTER TABLE users ADD COLUMN ${db.kind === 'postgres' ? 'IF NOT EXISTS ' : ''}google_sub TEXT`); } catch { /* already there */ }
 
   const enq = (r) => ({ ...r, id: Number(r.id), email_sent: !!Number(r.email_sent) });
   const user = (r) => r && {
@@ -110,6 +113,11 @@ export async function createStore({ pool } = {}) {
     async adminCount() { return Number((await db.all("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'"))[0].n); },
     async createUser({ email, name, passwordHash, role }) {
       return db.insert('INSERT INTO users (email,name,password_hash,role,created_at) VALUES (?,?,?,?,?)', [email, name, passwordHash, role, now()]);
+    },
+    /** Creates the user ONLY if no user exists yet — one atomic statement, so of any number of simultaneous
+     *  attempts (even on different servers) exactly one wins. Returns the new id, or null if someone already exists. */
+    async createFirstUser({ email, name, passwordHash, role }) {
+      return db.insert('INSERT INTO users (email,name,password_hash,role,created_at) SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM users)', [email, name, passwordHash, role, now()]);
     },
     async userByEmail(email) { return (await db.all('SELECT * FROM users WHERE email = ?', [email]))[0] || null; },     // includes password_hash
     async userById(id) { return user((await db.all('SELECT * FROM users WHERE id = ?', [id]))[0]); },
@@ -155,6 +163,15 @@ export async function createStore({ pool } = {}) {
       else await db.run('DELETE FROM sessions WHERE user_id = ?', [userId]);
     },
 
+    /* rate limiting (see limits.js) */
+    async rateHit(key) {
+      const t = Date.now();
+      await db.run('INSERT INTO rate_events (k, ts) VALUES (?,?)', [key, t]);
+      if (Math.random() < 0.05) await db.run('DELETE FROM rate_events WHERE ts < ?', [t - 3_600_000]);     // housekeeping
+    },
+    async rateCount(key, windowMs) { return Number((await db.all('SELECT COUNT(*) AS n FROM rate_events WHERE k = ? AND ts > ?', [key, Date.now() - windowMs]))[0].n); },
+    async rateClear(key) { await db.run('DELETE FROM rate_events WHERE k = ?', [key]); },
+
     /* site content (+ version history) */
     async getContent() {
       const r = (await db.all("SELECT value, updated_at, updated_by FROM content WHERE key = 'site'"))[0];
@@ -163,7 +180,8 @@ export async function createStore({ pool } = {}) {
     async saveContent(data, userEmail, note) {
       const value = JSON.stringify(data), at = now();
       if ((await db.run("UPDATE content SET value = ?, updated_at = ?, updated_by = ? WHERE key = 'site'", [value, at, userEmail])) === 0) {
-        await db.run("INSERT INTO content (key,value,updated_at,updated_by) VALUES ('site',?,?,?)", [value, at, userEmail]);
+        try { await db.run("INSERT INTO content (key,value,updated_at,updated_by) VALUES ('site',?,?,?)", [value, at, userEmail]); }
+        catch { await db.run("UPDATE content SET value = ?, updated_at = ?, updated_by = ? WHERE key = 'site'", [value, at, userEmail]); }   // lost a race to another server
       }
       await db.insert('INSERT INTO content_versions (created_at,user_email,note,value) VALUES (?,?,?,?)', [at, userEmail, note || null, value]);
       await db.run(`DELETE FROM content_versions WHERE id NOT IN (SELECT id FROM (SELECT id FROM content_versions ORDER BY id DESC LIMIT ${MAX_VERSIONS}) keep)`);

@@ -24,6 +24,21 @@ ok('filtered list', (await store.list({ status: 'read' })).length === 1 && (awai
 
 // users
 ok('no users yet', (await store.userCount()) === 0);
+
+// atomic first user + shared rate limiting (both exist so several server copies can share one database safely)
+const [f1, f2] = await Promise.all([
+  store.createFirstUser({ email: 'first@x.co', name: 'First', passwordHash: 'h', role: 'admin' }),
+  store.createFirstUser({ email: 'second@x.co', name: 'Second', passwordHash: 'h', role: 'admin' }),
+]);
+ok('createFirstUser: of two simultaneous attempts exactly one wins', [f1, f2].filter(Boolean).length === 1 && (await store.userCount()) === 1, JSON.stringify([f1, f2]));
+ok('createFirstUser refuses once a user exists (returns null)', (await store.createFirstUser({ email: 'third@x.co', name: 'Third', passwordHash: 'h', role: 'admin' })) === null);
+await store.deleteUser(f1 || f2);
+ok('table is empty again for the next tests', (await store.userCount()) === 0);
+await store.rateHit('k1'); await store.rateHit('k1');
+ok('rateCount counts hits inside the window', (await store.rateCount('k1', 60000)) === 2 && (await store.rateCount('other', 60000)) === 0);
+ok('hits outside the window are ignored', (await store.rateCount('k1', -1)) === 0);
+await store.rateClear('k1');
+ok('rateClear forgets a key', (await store.rateCount('k1', 60000)) === 0);
 const uid = await store.createUser({ email: 'o@x.co', name: 'Owner', passwordHash: 'hash', role: 'admin' });
 ok('createUser + counts', (await store.userCount()) === 1 && (await store.adminCount()) === 1);
 ok('userByEmail includes hash, userById does not', (await store.userByEmail('o@x.co')).password_hash === 'hash' && !('password_hash' in (await store.userById(uid))));

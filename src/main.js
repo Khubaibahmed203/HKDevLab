@@ -30,7 +30,7 @@ async function loadContent() {
   const embedded = document.getElementById('site-content');
   if (embedded) { try { return JSON.parse(embedded.textContent); } catch { /* fall through */ } }
   try {
-    const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/content`, { cache: 'no-cache' });
+    const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/content`, { cache: 'no-cache', signal: AbortSignal.timeout(4000) });   // a cold server must never hold the page hostage
     if (res.ok) return await res.json();
   } catch { /* offline / API down */ }
   return defaults;
