@@ -254,11 +254,74 @@ function field(f, obj, touch, regroup) {
       const i = h('input', { id, type: 'text', value: (obj[f.k] || []).join(', '), autocomplete: 'off', oninput: () => { obj[f.k] = i.value.split(/[,\s]+/).map(Number).filter((n) => i.value.trim() && Number.isFinite(n)); touch(); } });
       return wrapFld({ ...f, help: 'Separate with commas, e.g. 38, 54, 46, 68' }, id, i);
     }
+    case 'image': return imageField(f, obj, touch);
     case 'list': return listField(f, obj, touch);
     case 'obj': return h('div', { class: 'fs' }, h('div', { class: 'lbl', text: f.label }), group(f.fields, obj[f.k], touch), f.help && h('small', { class: 'help', text: f.help }));
     case 'objlist': return objlistField(f, obj, touch);
     default: return h('div');
   }
+}
+
+/* ───────────── photo field: choose → shrink in the browser → upload → preview ───────────── */
+// Shrinking here keeps uploads small and quick, and re-drawing the picture drops hidden data such as GPS location from phone photos.
+async function decodeImage(file) {
+  if (window.createImageBitmap) { try { return await createImageBitmap(file); } catch { /* fall through */ } }
+  const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(new Error('read')); fr.readAsDataURL(file); });
+  return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = () => rej(new Error('decode')); img.src = dataUrl; });   // data: URL — the page's security policy allows those
+}
+const canvasBlob = (c, type, q) => new Promise((res) => c.toBlob(res, type, q));
+async function shrinkPhoto(file) {
+  const src = await decodeImage(file);
+  try {
+    for (const [max, q] of [[1400, 0.86], [1100, 0.8], [800, 0.74]]) {           // try smaller until it fits comfortably under the 1.5 MB limit
+      const k = Math.min(1, max / Math.max(src.width, src.height));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(src.width * k)); c.height = Math.max(1, Math.round(src.height * k));
+      c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+      let blob = await canvasBlob(c, 'image/webp', q);
+      if (!blob || blob.type !== 'image/webp') blob = await canvasBlob(c, 'image/jpeg', q + 0.02);   // Safari cannot write WebP
+      if (blob && blob.size <= 1_300_000) return blob;
+    }
+  } finally { if (src.close) src.close(); }
+  throw new Error('too big');
+}
+async function uploadPhoto(blob) {
+  try {
+    const res = await fetch('/api/admin/media', { method: 'POST', headers: { 'X-Requested-With': 'hk-admin', 'Content-Type': blob.type }, credentials: 'same-origin', body: blob });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { me = null; toast('Your session has ended — please sign in again.', true); showLogin(); return { error: 'Please sign in again.' }; }
+    return res.ok && data.url ? { url: data.url } : { error: data.error || 'The upload did not work. Please try again.' };
+  } catch { return { error: 'Could not reach the server.' }; }
+}
+function imageField(f, obj, touch) {
+  const thumb = h('div', { class: 'photo__thumb' });
+  const msg = h('small', { class: 'help', role: 'status' });
+  const input = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', hidden: true, 'aria-label': f.label });
+  const pick = h('button', { class: 'btn btn--sm', type: 'button', onclick: () => input.click() });
+  const drop = h('button', { class: 'btn btn--sm btn--danger', type: 'button', text: 'Remove photo', onclick: () => { obj[f.k] = ''; touch(); msg.textContent = ''; draw(); } });
+  const draw = () => {
+    const has = !!obj[f.k];
+    thumb.replaceChildren(has ? h('img', { src: obj[f.k], alt: 'Current photo' }) : h('span', { text: 'No photo yet' }));
+    pick.textContent = has ? 'Replace photo' : 'Upload photo';
+    drop.hidden = !has;
+  };
+  const say = (text, bad) => { msg.className = bad ? 'err' : 'help'; msg.textContent = text; };
+  input.onchange = async () => {
+    const file = input.files && input.files[0]; input.value = '';
+    if (!file) return;
+    pick.disabled = true; say('Preparing photo…');
+    let blob;
+    try { blob = await shrinkPhoto(file); } catch { pick.disabled = false; return say("That file could not be read as a photo. Please choose a JPG, PNG or WebP image.", true); }
+    say('Uploading…');
+    const r = await uploadPhoto(blob);
+    pick.disabled = false;
+    if (r.error) return say(r.error, true);
+    obj[f.k] = r.url; touch(); draw();
+    say('Photo uploaded. Remember to click "Save changes" to put it on the site.');
+  };
+  draw();
+  return h('div', { class: 'fld' }, h('span', { class: 'lbl', text: f.label }),
+    h('div', { class: 'photo' }, thumb, h('div', { class: 'photo__btns' }, pick, drop, input)), msg, f.help && h('small', { class: 'help', text: f.help }));
 }
 
 function listField(f, obj, touch) {

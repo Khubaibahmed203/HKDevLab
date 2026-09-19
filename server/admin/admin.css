@@ -43,6 +43,11 @@ input:focus-visible,select:focus-visible,textarea:focus-visible { outline:none; 
 input[type=color] { width:56px; height:42px; padding:3px; background:#000; border:1px solid var(--line); border-radius:10px; cursor:pointer; }
 input[type=checkbox] { width:18px; height:18px; accent-color:var(--sky); }
 select option { background:#0a1018; }
+.photo { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+.photo__thumb { width:84px; aspect-ratio:4/5; flex:none; display:grid; place-items:center; text-align:center; overflow:hidden; border:1px dashed var(--line2); border-radius:12px; background:#000; color:var(--muted); font-size:.72rem; }
+.photo__thumb span { padding:6px; }
+.photo__thumb img { width:100%; height:100%; object-fit:cover; object-position:50% 25%; display:block; }
+.photo__btns { display:flex; gap:8px; flex-wrap:wrap; }
 .count { font-size:.75rem; color:var(--muted); text-align:right; }
 .check { display:flex; align-items:center; gap:10px; }
 

@@ -9,6 +9,7 @@
  *   area     paragraph(s)                  href     "#anchor", /path, https://… or mailto:…
  *   select   one of `options`              color    #rrggbb
  *   bool     checkbox                      list     list of one-line strings
+ *   image    photo uploaded in the admin (stored as /media/<id>)
  *   numlist  list of numbers 0–100         obj      nested group (`fields`)
  *   objlist  repeatable group (`fields`)
  * Modifiers: max, min (length), maxItems, minItems, optional, when: { field: [values] }, itemLabel
@@ -62,6 +63,24 @@ export const SCHEMA = [
       objlist('tiles', 'Tech stack tiles (they fly past as you scroll)', [text('text', 'Name', { max: 30 }), { k: 'hot', label: 'Highlight', type: 'bool' }], { minItems: 3, maxItems: 16, itemLabel: 'text' }),
       objlist('services', 'Services', [icon(), text('title', 'Title', { max: 40 }), area('text', 'Description', { max: 200 })], { minItems: 1, maxItems: 8, itemLabel: 'title' }),
       objlist('principles', 'Principles', [icon(), text('title', 'Title', { max: 40 }), area('text', 'Description', { max: 160 })], { minItems: 1, maxItems: 8, itemLabel: 'title' }),
+    ],
+  },
+  {
+    key: 'founders', label: 'Founders (about)',
+    hint: 'Portrait cards shown at the end of The Lab section. For each founder: a photo, name, role, a short bio and a portfolio link.',
+    fields: [
+      { k: 'show', label: 'Show this section on the site', type: 'bool' },
+      text('eyebrow', 'Section label', { max: 50 }),
+      lines('title', 'Headline', { help: 'The last line is shown in blue.' }),
+      area('intro', 'Intro paragraph (optional)', { max: 240, optional: true }),
+      objlist('people', 'Founders', [
+        { k: 'photo', label: 'Portrait photo', type: 'image', optional: true, help: 'JPG, PNG or WebP. A head-and-shoulders portrait works best — it is shown in a tall 4:5 frame, cropped from the centre-top. Without a photo, a monogram of their initials is shown.' },
+        text('name', 'Name', { max: 50 }),
+        text('role', 'Role / title', { max: 60 }),
+        area('bio', 'About', { max: 420, help: 'Two or three sentences.' }),
+        text('linkLabel', 'Portfolio button text', { max: 30, optional: true, help: 'Leave empty for "View portfolio".' }),
+        href('link', 'Portfolio link', { optional: true, help: 'The full https:// address of their portfolio. Leave empty to hide the button.' }),
+      ], { minItems: 1, maxItems: 4, itemLabel: 'name' }),
     ],
   },
   {

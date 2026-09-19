@@ -54,6 +54,72 @@ export function labReveal() {
 }
 
 /**
+ * Founders: each portrait frame wipes open from the bottom while its photo settles, the viewfinder corners snap in,
+ * then the words rise. The photo also drifts slowly inside its frame as you scroll past, and on a mouse the frame tilts
+ * toward the pointer (the same feel as the stack scene). Returns a cleanup for the pointer listeners.
+ */
+export function foundersReveal() {
+  const sec = $('#founders');
+  if (!sec || sec.hidden) return () => {};
+  const off = [];
+
+  const head = $$('.founders__head > *', sec).filter((el) => !el.hidden);
+  gsap.set(head, { y: 28, opacity: 0 });
+  ScrollTrigger.create({
+    trigger: '.founders__head', start: 'top 86%', once: true,
+    onEnter: () => gsap.to(head, { y: 0, opacity: 1, duration: 1, stagger: 0.12, ease: 'power3.out', clearProps: 'transform,opacity' }),
+  });
+
+  const canTilt = matchMedia('(hover: hover) and (pointer: fine)').matches;
+  $$('.founder', sec).forEach((card, i) => {
+    const frame = $('.founder__frame', card);
+    const pic = $('.founder__img', frame);
+    const inner = pic || $('.founder__mono', frame);
+    const corners = $$('.fc', card);
+    const words = $$('.founder__info > *', card);
+    const ghost = $('.founder__ghost', card);
+
+    gsap.set(frame, { clipPath: 'inset(100% 0% 0% 0%)' });
+    gsap.set(inner, { scale: 1.18 });
+    gsap.set(corners, { opacity: 0, scale: 0.4 });
+    gsap.set(ghost, { opacity: 0 });
+    gsap.set(words, { y: 24, opacity: 0 });
+
+    ScrollTrigger.create({
+      trigger: card, start: 'top 84%', once: true,
+      onEnter: () => {
+        gsap.timeline({ defaults: { ease: 'expo.out' }, delay: i % 2 ? 0.12 : 0 })
+          .to(frame, { clipPath: 'inset(0% 0% 0% 0%)', duration: 1.35, onComplete: () => gsap.set(frame, { clearProps: 'clipPath' }) }, 0)
+          .to(inner, { scale: 1, duration: 1.9 }, 0)
+          .to(ghost, { opacity: 1, duration: 0.9, clearProps: 'opacity' }, 0.35)
+          .to(corners, { opacity: 1, scale: 1, duration: 0.7, stagger: 0.08, ease: 'back.out(2.2)', clearProps: 'transform,opacity' }, 0.55)
+          .to(words, { y: 0, opacity: 1, duration: 0.95, stagger: 0.09, ease: 'power3.out', clearProps: 'transform,opacity' }, 0.5);
+      },
+    });
+
+    // the photo drifts inside its frame (the image is 12% taller than the frame, so its edges never show)
+    if (pic && !document.documentElement.classList.contains('is-lite')) {
+      gsap.fromTo(pic, { yPercent: -4 }, { yPercent: 4, ease: 'none', scrollTrigger: { trigger: card, start: 'top bottom', end: 'bottom top', scrub: true } });
+    }
+
+    if (canTilt) {
+      const rx = gsap.quickTo(frame, 'rotationX', { duration: 0.9, ease: 'power3' });
+      const ry = gsap.quickTo(frame, 'rotationY', { duration: 0.9, ease: 'power3' });
+      const move = (e) => {
+        const r = frame.getBoundingClientRect();
+        ry(((e.clientX - r.left) / r.width - 0.5) * 9);
+        rx(-((e.clientY - r.top) / r.height - 0.5) * 7);
+      };
+      const leave = () => { rx(0); ry(0); };
+      card.addEventListener('pointermove', move);
+      card.addEventListener('pointerleave', leave);
+      off.push(() => { card.removeEventListener('pointermove', move); card.removeEventListener('pointerleave', leave); });
+    }
+  });
+  return () => off.forEach((fn) => fn());
+}
+
+/**
  * The stack flies past the camera (every screen size). Each tile lives at a depth
  * (data-z); scrolling pushes the whole scene forward, and opacity is derived
  * from each tile's distance to the camera so tiles emerge from the dark and

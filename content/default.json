@@ -44,6 +44,30 @@
       { "icon": "shield", "title": "Reliable", "text": "Clean, tested code you can depend on and build on." }
     ]
   },
+  "founders": {
+    "show": true,
+    "eyebrow": "The founders",
+    "title": "Two founders.\nOne lab.",
+    "intro": "The people behind HK DevLab — add a short line about who you are and why you started the studio.",
+    "people": [
+      {
+        "photo": "",
+        "name": "Founder Name",
+        "role": "Co-founder · Role or title",
+        "bio": "Write a short paragraph about this founder: their background, what they build, and what they care about.",
+        "linkLabel": "View portfolio",
+        "link": "#contact"
+      },
+      {
+        "photo": "",
+        "name": "Founder Name",
+        "role": "Co-founder · Role or title",
+        "bio": "Write a short paragraph about this founder: their background, what they build, and what they care about.",
+        "linkLabel": "View portfolio",
+        "link": "#contact"
+      }
+    ]
+  },
   "process": {
     "eyebrow": "02 — Process",
     "title": "From idea\nto launch",

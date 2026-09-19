@@ -61,7 +61,14 @@
 .hero__side--l { left: var(--gutter); text-align: left; }
 .hero__side--r { right: var(--gutter); text-align: right; }
 .hero__side--r li::before { content: none; } .hero__side--r li::after { content: '‹'; color: var(--cyan); margin-left: .8em; }
-@media (min-width: 1100px) { .hero__side { display: flex; } }
+/* Desktops: the two edge lists ("Ideas / Design…" and "Fast / Responsive / Reliable") each need ~150px beside the wordmark, so the
+   wordmark is sized to the space between them (never wider than it) and its tags + pixel squares hug it instead of the page edge. */
+@media (min-width: 1100px) {
+  .hero__side { display: flex; }
+  .hero__wm { width: fit-content; max-width: 100%; margin-inline: auto; }
+  .wordmark { font-size: clamp(3.2rem, min(15.4vw, calc((100vw - 2 * (var(--gutter) + 150px)) / 5.3)), 15.5rem); }
+  .px { margin-right: -1.4vw; }             /* keeps the pixel-square cluster clear of the "b" now that it hugs the wordmark */
+}
 
 .hero__scroll { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); display: grid; justify-items: center; gap: 10px; font: 500 .68rem/1 var(--f-mono); letter-spacing: .3em; text-transform: uppercase; color: var(--muted); padding: 8px 12px; }
 .hero__scroll i { width: 1px; height: 44px; background: linear-gradient(var(--cyan), transparent); transform-origin: top; animation: cue 2s var(--ease) infinite; }
@@ -135,6 +142,70 @@
 .principles svg { width: 26px; height: 26px; fill: none; stroke: var(--sky); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; margin-bottom: 8px; }
 .principles b { font: 600 1.15rem var(--f-display); letter-spacing: -.01em; }
 .principles span { color: var(--muted); font-size: .94rem; max-width: 30ch; }
+
+/* — founders: tall portrait frames with lab "viewfinder" corners, an offset outline behind, the logo's pixel squares — */
+.founders { position: relative; padding-bottom: clamp(72px, 14vh, 150px); }
+.founders[hidden] { display: none; }
+.founders__head { display: grid; gap: 18px; justify-items: start; max-width: 760px; }
+.founders__title { font-size: clamp(2.4rem, 6vw, 4.6rem); }
+.founders__intro { color: var(--muted); max-width: 54ch; font-size: 1.05rem; }
+.founders__intro[hidden] { display: none; }
+
+.founders__grid { display: grid; gap: clamp(44px, 6vw, 72px) clamp(28px, 5vw, 72px); grid-template-columns: 1fr; margin: clamp(40px, 7vh, 80px) 0 0; }
+.founders__grid[data-n="3"], .founders__grid[data-n="4"] { grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); }
+.founder { display: grid; gap: 30px; align-content: start; max-width: 480px; width: 100%; margin-inline: auto; }
+@media (min-width: 720px) {
+  .founders__grid[data-n="2"] { grid-template-columns: repeat(2, minmax(0, 520px)); justify-content: space-between; }     /* spans the same column as the rest of the site */
+  .founders__grid[data-n="2"] .founder:nth-child(even) { margin-top: clamp(40px, 7vw, 96px); }     /* the second card sits lower: a staggered, editorial rhythm */
+  .founders__grid[data-n="1"] { justify-content: center; }
+  .founders__grid[data-n="1"] .founder { max-width: 520px; }
+  .founder { max-width: none; }
+}
+
+.founder__media { position: relative; margin: 0; perspective: 1000px; }
+.founder__ghost { position: absolute; inset: 0; border: 1px solid rgba(29, 228, 255, .3); border-radius: 26px; transform: translate(14px, 14px); pointer-events: none; transition: transform .6s var(--ease), border-color .4s; }
+.founder__frame {
+  position: relative; aspect-ratio: 4 / 5; border-radius: 26px; overflow: hidden; isolation: isolate; will-change: transform;
+  background: linear-gradient(150deg, rgba(24, 46, 82, .55), rgba(6, 12, 24, .88));
+  border: 1px solid rgba(120, 180, 255, .24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 34px 80px -30px rgba(11, 116, 255, .45);
+}
+.founder__img { position: absolute; left: 0; top: -6%; width: 100%; height: 112%; max-width: none; object-fit: cover; object-position: 50% 24%; display: block; filter: saturate(.94) contrast(1.03); }
+.founder__frame::after {          /* brand tint + a soft fade top and bottom so the labels stay readable on any photo */
+  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .5), transparent 20%), linear-gradient(0deg, rgba(0, 0, 0, .55), transparent 30%), linear-gradient(160deg, rgba(11, 116, 255, .2), transparent 55%);
+}
+/* no photo yet: a designed monogram — dot grid, the dial's rings, the initials in the brand gradient */
+.founder__mono { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(62% 46% at 50% 40%, rgba(18, 166, 255, .3), transparent 72%), radial-gradient(rgba(160, 200, 255, .24) 1px, transparent 1.6px) 0 0 / 22px 22px; }
+.founder__mono::before, .founder__mono::after { content: ''; position: absolute; left: 50%; top: 46%; border-radius: 50%; transform: translate(-50%, -50%); }
+.founder__mono::before { width: 58%; aspect-ratio: 1; border: 1px dashed rgba(29, 228, 255, .4); }
+.founder__mono::after { width: 82%; aspect-ratio: 1; border: 1px solid rgba(160, 190, 230, .16); }
+.founder__mono span { position: relative; z-index: 1; margin-top: -6%; font: 800 clamp(3.6rem, 9vw, 6.6rem)/1 var(--f-display); letter-spacing: -.05em; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 0 30px rgba(18, 166, 255, .4)); }
+
+.fc { position: absolute; z-index: 2; width: 22px; height: 22px; border: 0 solid var(--cyan); pointer-events: none; filter: drop-shadow(0 0 6px rgba(29, 228, 255, .6)); transition: width .5s var(--ease), height .5s var(--ease); }
+.fc--tl { left: 14px; top: 14px; border-width: 2px 0 0 2px; border-top-left-radius: 9px; }
+.fc--tr { right: 14px; top: 14px; border-width: 2px 2px 0 0; border-top-right-radius: 9px; }
+.fc--bl { left: 14px; bottom: 14px; border-width: 0 0 2px 2px; border-bottom-left-radius: 9px; }
+.fc--br { right: 14px; bottom: 14px; border-width: 0 2px 2px 0; border-bottom-right-radius: 9px; }
+.founder__tag { position: absolute; z-index: 2; left: 46px; top: 15px; display: inline-flex; align-items: center; gap: .8em; font: 500 .66rem/22px var(--f-mono); letter-spacing: .22em; text-transform: uppercase; color: #eaf3ff; text-shadow: 0 1px 10px rgba(0, 0, 0, .7); }
+.founder__tag::before { content: ''; width: 6px; height: 6px; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+.founder__px { position: absolute; z-index: 2; right: 46px; bottom: 20px; display: flex; gap: 5px; align-items: flex-end; }
+.founder__px i { display: block; width: 8px; height: 8px; background: var(--cyan); box-shadow: 0 0 12px rgba(29, 228, 255, .7); }
+.founder__px i:nth-child(2) { width: 6px; height: 6px; background: var(--blue); box-shadow: 0 0 12px rgba(11, 116, 255, .8); }
+.founder__px i:nth-child(3) { width: 4px; height: 4px; background: var(--sky); }
+.founder:hover .founder__ghost { transform: translate(8px, 8px); border-color: rgba(29, 228, 255, .6); }
+.founder:hover .fc { width: 30px; height: 30px; }
+
+.founder__info { display: grid; gap: 12px; justify-items: start; padding-inline: 4px; }
+.founder__idx { display: flex; align-items: center; gap: .9em; font: 500 .78rem/1 var(--f-mono); letter-spacing: .22em; color: var(--sky); }
+.founder__idx::after { content: ''; width: 40px; height: 1px; background: currentColor; opacity: .6; }
+.founder__name { font: 700 clamp(1.8rem, 3.2vw, 2.5rem)/1.05 var(--f-display); letter-spacing: -.035em; }
+.founder__role { font: 500 .74rem/1.55 var(--f-mono); letter-spacing: .16em; text-transform: uppercase; color: var(--cyan); }
+.founder__bio { color: var(--muted); max-width: 46ch; line-height: 1.65; }
+.founder__link { margin-top: 10px; }
+.founder__link svg { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.founder__link:hover svg { transform: translate(3px, -3px); }
+.is-lite .founder__frame { box-shadow: none; }
 
 /* ═════════ 3 · PROCESS ═════════ */
 .process { padding: clamp(72px, 12vh, 140px) 0; border-block: 1px solid var(--line); background: linear-gradient(180deg, rgba(4, 7, 13, .75), rgba(0, 0, 0, .55)); }

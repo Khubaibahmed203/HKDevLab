@@ -9,6 +9,7 @@ export const DEFAULT_CONTENT = JSON.parse(readFileSync(resolve(root, 'content/de
 const CTRL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const HREF = /^(#[\w-]*|\/[^\s]*|https?:\/\/[^\s"'<>]+|mailto:[^\s"'<>]+)$/i;
 const COLOR = /^#[0-9a-f]{6}$/i;
+export const MEDIA_URL = /^\/media\/[a-f0-9]{32}$/;          // the only image address content may hold: a photo uploaded through the admin
 
 const oneLine = (v) => (typeof v === 'string' ? v : '').replace(CTRL, '').replace(/[\r\n\t]+/g, ' ').trim();
 const multiLine = (v) => (typeof v === 'string' ? v : '').replace(/\r\n?/g, '\n').replace(CTRL, '').trim();
@@ -20,12 +21,13 @@ function clean(f, raw, path, errors, parent) {
   const label = f.label || f.k;
 
   switch (f.type) {
-    case 'text': case 'href': case 'select': case 'color': {
+    case 'text': case 'href': case 'select': case 'color': case 'image': {
       const s = oneLine(raw);
       if (!s) { if (!f.optional) fail(`${label} can't be empty.`); return ''; }
       if (s.length > (f.max ?? 200)) { fail(`${label} is too long (max ${f.max} characters).`); return s.slice(0, f.max); }
       if (f.type === 'href' && !HREF.test(s)) fail(`${label} must start with #, /, https://, http:// or mailto:`);
       if (f.type === 'color' && !COLOR.test(s)) fail(`${label} must be a colour like #12a6ff.`);
+      if (f.type === 'image' && !MEDIA_URL.test(s)) { fail(`${label} must be a photo uploaded here.`); return ''; }
       if (f.type === 'select') {
         const allowed = f.options.map((o) => (typeof o === 'string' ? o : o.value));
         if (!allowed.includes(s)) { fail(`${label} has an unknown option.`); return allowed[0]; }

@@ -53,6 +53,19 @@ Locked out? On the server run `npm run reset-password -- you@example.com "a new 
 
 What is *not* editable in the portal: the logo/brand images (replace the files in `public/brand/`), colours and layout (code).
 
+## Founders and photos
+
+The **Founders (about)** section (end of The Lab) is edited under **Admin → Site content → Founders (about)**: a "Show this section" checkbox,
+a headline, an optional intro, and one card per founder (up to 4) with a **portrait photo**, name, role, a short bio and a portfolio link.
+Until a photo is uploaded the card shows a designed monogram of their initials; leave the link empty to hide its button.
+The defaults are placeholders ("Founder Name") — fill them in on the live `/admin`, or untick *Show* to hide the section meanwhile.
+
+Photos are uploaded from the admin (it shrinks them in the browser first, which also removes hidden data such as GPS location). They are
+stored **in the database** as base64 text (Vercel has no disk) and served from `/media/<id>` — the id is a hash of the file, so each photo has a
+permanent address and is cached for a year. The upload endpoint (`POST /api/admin/media`) needs a signed-in editor, the CSRF header and a same-site
+Origin, is rate-limited, accepts only JPEG / PNG / WebP decided from the file's own first bytes (never SVG), and refuses files over 1.5 MB.
+Content can only point at `/media/<id>` addresses, never at outside image URLs. On Vercel `vercel.json` routes `/media/*` to the same function.
+
 ## How a contact message travels
 
 ```
@@ -164,5 +177,6 @@ content/  default.json (initial content) · schema.js (the ONE definition of eve
 server/   index.js · auth.js · db.js · content.js · mail.js · validate.js · admin/ (the portal UI)
 public/   brand/ (logos), robots.txt
 ```
-Tests: `node server/test-pg.mjs` exercises the PostgreSQL code path (in-memory emulator) · `node server/test-google.mjs` runs the whole
+Tests: `node server/test-media.mjs` covers photo uploads (auth, type sniffing, size, serving, content validation) ·
+`node server/test-pg.mjs` exercises the PostgreSQL code path (in-memory emulator) · `node server/test-google.mjs` runs the whole
 Google sign-in flow against a fake Google server (PKCE, state, nonce, invites, replays, tampering).

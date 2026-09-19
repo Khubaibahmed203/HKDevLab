@@ -6,7 +6,8 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
     { "source": "/admin", "destination": "/api" },
-    { "source": "/admin/(.*)", "destination": "/api" }
+    { "source": "/admin/(.*)", "destination": "/api" },
+    { "source": "/media/(.*)", "destination": "/api" }
   ],
   "functions": {
     "api/index.js": {

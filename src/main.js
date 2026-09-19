@@ -11,7 +11,7 @@ import { initSmooth } from './modules/smooth.js';
 import { initField } from './modules/field.js';
 import { initChrome } from './modules/chrome.js';
 import { heroIntro, heroScroll } from './modules/hero.js';
-import { labReveal, labUniverse } from './modules/lab.js';
+import { labReveal, labUniverse, foundersReveal } from './modules/lab.js';
 import { processScene } from './modules/process.js';
 import { buildWork, workScene } from './modules/work.js';
 import { initContact, contactReveal } from './modules/contact.js';
@@ -87,8 +87,9 @@ async function start() {
       processScene();
       const offWork = workScene();
       labReveal();
+      const offFounders = foundersReveal();
       contactReveal();
-      return () => { off(); offWork(); html.classList.remove('is-cinema', 'is-compact', 'is-short'); };
+      return () => { off(); offWork(); offFounders(); html.classList.remove('is-cinema', 'is-compact', 'is-short'); };
     });
     watchPerformance(() => field.lite());
   }

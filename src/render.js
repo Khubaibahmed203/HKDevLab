@@ -33,6 +33,60 @@ const safeHref = (v) => (/^(#[\w-]*|\/[^\s]*|https?:\/\/[^\s"'<>]+|mailto:[^\s"'
 // where each stack tile floats in the 3D fly-through (x, y in vw / vh from centre)
 const TILE_SPOTS = [[-34, -18], [30, -24], [-8, -34], [-40, 12], [36, 8], [0, -6], [-30, -26], [28, 24], [-14, 26], [38, -14], [-36, 20], [12, -2], [-22, 4], [24, -8], [-4, 14], [16, 30]];
 
+const MEDIA = /^\/media\/[a-f0-9]{32}$/;                 // photos can only be ones uploaded through the admin
+const initials = (name) => {
+  const w = String(name || '').trim().split(/\s+/).filter(Boolean).map((x) => Array.from(x)[0]);
+  return ((w[0] || '') + (w.length > 1 ? w[w.length - 1] : '')).toUpperCase() || 'HK';
+};
+const svgArrow = () => {
+  const NS = 'http://www.w3.org/2000/svg';
+  const s = document.createElementNS(NS, 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS(NS, 'path'); p.setAttribute('d', 'M7 17 17 7M8 7h9v9'); s.append(p);
+  return s;
+};
+
+/** The founders block: one portrait card per person. Hidden when switched off or empty. */
+function applyFounders(f) {
+  const sec = $('#founders');
+  if (!sec) return;
+  const people = f && f.show && Array.isArray(f.people) ? f.people.filter((p) => p && p.name) : [];
+  sec.hidden = !people.length;
+  if (!people.length) return;
+
+  setText('#foundersEyebrow', f.eyebrow);
+  const tl = String(f.title || '').split('\n');
+  const last = tl.pop();
+  set($('#foundersTitle'), ...tl.flatMap((l) => [l, h('br')]), h('span', { class: 'grad', text: last }));
+  const intro = $('#foundersIntro');
+  intro.textContent = f.intro || ''; intro.hidden = !f.intro;
+
+  const grid = $('#foundersGrid');
+  grid.dataset.n = String(Math.min(people.length, 4));
+  set(grid, ...people.map((p, i) => {
+    const photo = MEDIA.test(p.photo || '');
+    const url = p.link && p.link !== '#' ? safeHref(p.link) : null;
+    const external = !!url && /^https?:/i.test(url);
+    const label = (p.linkLabel || '').trim() || 'View portfolio';
+    const corners = ['tl', 'tr', 'bl', 'br'].map((c) => h('i', { class: `fc fc--${c}`, 'aria-hidden': 'true' }));
+    return h('li', { class: 'founder' },
+      h('div', { class: 'founder__media' },
+        h('span', { class: 'founder__ghost', 'aria-hidden': 'true' }),
+        h('div', { class: 'founder__frame' },
+          photo ? h('img', { class: 'founder__img', src: p.photo, alt: `Portrait of ${p.name}`, loading: 'lazy', decoding: 'async', width: 800, height: 1000 })
+                : h('div', { class: 'founder__mono', 'aria-hidden': 'true' }, h('span', { text: initials(p.name) })),
+          ...corners,
+          h('span', { class: 'founder__tag', 'aria-hidden': 'true', text: `Founder ${pad(i)}` }),
+          h('span', { class: 'founder__px', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')))),
+      h('div', { class: 'founder__info' },
+        h('p', { class: 'founder__idx', 'aria-hidden': 'true', text: pad(i) }),
+        h('h3', { class: 'founder__name', text: p.name }),
+        p.role ? h('p', { class: 'founder__role', text: p.role }) : null,
+        p.bio ? h('p', { class: 'founder__bio', text: p.bio }) : null,
+        url ? h('a', Object.assign({ class: 'btn btn--ghost btn--sm founder__link', href: url, 'aria-label': `${label} — ${p.name}${external ? ' (opens in a new tab)' : ''}` },
+          external ? { target: '_blank', rel: 'noopener noreferrer' } : {}), label, svgArrow()) : null));
+  }));
+}
+
 export function applyContent(c) {
   document.title = c.seo.title;
   $('meta[name="description"]')?.setAttribute('content', c.seo.description);
@@ -65,6 +119,8 @@ export function applyContent(c) {
   }));
   set($('#services'), ...lab.services.map((s) => h('li', { class: 'card', 'data-spot': '' }, iconEl(s.icon), h('h4', { text: s.title }), h('p', { text: s.text }))));
   set($('#principles'), ...lab.principles.map((p) => h('li', {}, iconEl(p.icon), h('b', { text: p.title }), h('span', { text: p.text }))));
+
+  applyFounders(c.founders);
 
   /* process */
   const pr = c.process;

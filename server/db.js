@@ -72,6 +72,9 @@ export async function createStore({ pool } = {}) {
        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`,
     `CREATE TABLE IF NOT EXISTS content_versions (
        id ${db.pk}, created_at TEXT NOT NULL, user_email TEXT, note TEXT, value TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS media (
+       id TEXT PRIMARY KEY, mime TEXT NOT NULL, data TEXT NOT NULL,
+       size INTEGER NOT NULL, created_at TEXT NOT NULL, created_by TEXT)`,
   ].join(';\n'));
   // databases created before Google sign-in existed lack this column
   try { await db.exec(`ALTER TABLE users ADD COLUMN ${db.kind === 'postgres' ? 'IF NOT EXISTS ' : ''}google_sub TEXT`); } catch { /* already there */ }
@@ -189,5 +192,15 @@ export async function createStore({ pool } = {}) {
     },
     async listVersions() { return (await db.all('SELECT id, created_at, user_email, note FROM content_versions ORDER BY id DESC LIMIT 40')).map((r) => ({ ...r, id: Number(r.id) })); },
     async getVersion(id) { const r = (await db.all('SELECT value FROM content_versions WHERE id = ?', [id]))[0]; return r ? JSON.parse(r.value) : null; },
+
+    /* uploaded photos, kept as base64 text (identical on SQLite and Postgres — no binary-column quirks). The id is a hash of
+       the bytes, so the same photo is stored once and its address never changes. */
+    async saveMedia({ id, mime, bytes, by }) {
+      await db.run('INSERT INTO media (id,mime,data,size,created_at,created_by) VALUES (?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING', [id, mime, bytes.toString('base64'), bytes.length, now(), by]);
+    },
+    async getMedia(id) {
+      const r = (await db.all('SELECT mime, data FROM media WHERE id = ?', [id]))[0];
+      return r ? { mime: r.mime, bytes: Buffer.from(r.data, 'base64') } : null;
+    },
   };
 }

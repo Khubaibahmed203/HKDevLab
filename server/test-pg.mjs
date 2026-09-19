@@ -85,6 +85,14 @@ ok('getVersion', (await store.getVersion(vs[1].id)).a === 1);
 for (let i = 0; i < 45; i++) await store.saveContent({ a: 100 + i }, 'o@x.co', `n${i}`);
 ok('version history is capped at 40', (await store.listVersions()).length === 40);
 
+// uploaded photos (stored as base64 text)
+const photo = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 1, 2, 3, 250, 251, 252, 253, 254, 255, 0, 0, 9]);
+await store.saveMedia({ id: 'a'.repeat(32), mime: 'image/jpeg', bytes: photo, by: 'o@x.co' });
+await store.saveMedia({ id: 'a'.repeat(32), mime: 'image/jpeg', bytes: photo, by: 'o@x.co' });      // same id again: ignored, no error
+const gotPhoto = await store.getMedia('a'.repeat(32));
+ok('media: bytes round-trip exactly (incl. 0x00 and 0xFF)', gotPhoto && Buffer.isBuffer(gotPhoto.bytes) && gotPhoto.bytes.equals(photo) && gotPhoto.mime === 'image/jpeg');
+ok('media: unknown id → null', (await store.getMedia('b'.repeat(32))) === null);
+
 // cleanup
 ok('deleteUser', (await store.deleteUser(uid)) === true && (await store.userCount()) === 0);
 ok('remove enquiry', (await store.remove(id)) === true && (await store.list()).length === 0);

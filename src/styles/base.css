@@ -151,6 +151,7 @@ main, .foot { position: relative; z-index: 1; }
 .no-anim .boot { display: none; }
 .no-anim [style*="opacity"] { opacity: 1 !important; }         /* undo any half-applied "hidden until animated" state */
 .no-anim [style*="visibility"] { visibility: visible !important; }
+.no-anim [style*="clip-path"] { clip-path: none !important; }
 .no-anim .wordmark i, .no-anim .hdr, .no-anim .chip span, .no-anim .hero__lower > *, .no-anim .hero__side li { transform: none !important; filter: none !important; }
 
 /* ───── animation switch (footer) + note for devices that ask for reduced motion ───── */

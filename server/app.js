@@ -164,6 +164,24 @@ export async function createApp() {
     remember(value, at, req.user.email);
     res.json({ ok: true, content: value, updatedAt: at, updatedBy: req.user.email });
   }));
+  // photo upload (admins and editors): the raw image bytes in the request body. The type is decided from the FILE'S OWN
+  // first bytes — never from what the browser claims — and only JPEG / PNG / WebP are accepted (no SVG: it can carry script).
+  const sniff = (b) => {
+    if (b.length > 12 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+    if (b.length > 12 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+    if (b.length > 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+    return null;
+  };
+  admin.post('/media', express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '1.5mb' }), asyncH(async (req, res) => {
+    if (await limiter.take(`m:${req.user.id}`, 30, 10 * 60_000)) return res.status(429).json({ ok: false, error: 'Too many uploads — please wait a few minutes.' });
+    const bytes = req.body;
+    const mime = Buffer.isBuffer(bytes) ? sniff(bytes) : null;
+    if (!mime) return res.status(415).json({ ok: false, error: 'Please choose a JPG, PNG or WebP photo.' });
+    const id = createHash('sha256').update(bytes).digest('hex').slice(0, 32);
+    await store.saveMedia({ id, mime, bytes, by: req.user.email });
+    res.status(201).json({ ok: true, url: `/media/${id}` });
+  }));
+
   admin.get('/content/versions', asyncH(async (req, res) => res.json({ versions: await store.listVersions() })));
   admin.post('/content/restore/:id', asyncH(async (req, res) => {
     const old = await store.getVersion(+req.params.id);
@@ -181,6 +199,19 @@ export async function createApp() {
   app.get('/admin/schema.js', (req, res) => res.type('js').sendFile(resolve(root, 'content/schema.js')));
   app.get(['/admin', '/admin/'], (req, res) => res.sendFile(resolve(root, 'server/admin/index.html')));
   app.use('/admin', express.static(resolve(root, 'server/admin'), { index: false }));
+
+  // uploaded photos are public (they appear on the site). Address = hash of the bytes, so they can be cached for good.
+  app.get('/media/:id', asyncH(async (req, res) => {
+    if (!/^[a-f0-9]{32}$/.test(req.params.id)) return res.status(404).type('text').send('Not found');
+    const m = await store.getMedia(req.params.id);
+    if (!m) return res.status(404).type('text').send('Not found');
+    res.set({
+      'Content-Type': m.mime,
+      'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Content-Disposition': 'inline',
+    }).send(m.bytes);
+  }));
 
   app.use('/api', (req, res) => res.status(404).json({ ok: false }));
 
@@ -209,6 +240,7 @@ export async function createApp() {
   app.use((req, res) => res.status(404).type('text').send('Not found'));
   app.use((err, req, res, next) => {                              // bad JSON, oversize body…
     if (res.headersSent) return next(err);
+    if (err.type === 'entity.too.large') return res.status(413).json({ ok: false, error: 'That file is too large. Photos can be up to 1.5 MB (they are shrunk automatically when you upload them here).' });
     if (!err.status || err.status >= 500) console.error('[server]', err);
     res.status(err.status && err.status < 500 ? err.status : 500).json({ ok: false, error: err.status && err.status < 500 ? 'Bad request.' : 'Something went wrong.' });
   });
