@@ -1,0 +1,45 @@
+# Render Blueprint — creates the HK DevLab web service (site + API + /admin in one Node server).
+# Secrets are NOT stored here: variables marked `sync: false` are typed into Render's dashboard when you apply the blueprint,
+# and `generateValue: true` makes Render invent a random value (readable afterwards under the service's Environment tab).
+services:
+  - type: web
+    name: hkdevlab
+    runtime: node
+    region: singapore          # closest Render region to India; change if you prefer
+    plan: free                 # free web services sleep when idle; switch to "starter" (always-on) in the dashboard when ready
+    branch: main
+    autoDeploy: true
+    # --include=dev: the build needs Vite, which lives in devDependencies (Render sets NODE_ENV=production)
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      # ── database: a PostgreSQL URL (e.g. from Neon). Render's disk is wiped on every deploy, so SQLite is not an option here.
+      - key: DATABASE_URL
+        sync: false
+      # ── admin portal: the key that lets ONLY YOU claim the first (admin) account. Read it under Environment after deploy.
+      - key: SETUP_TOKEN
+        generateValue: true
+      - key: IP_HASH_SALT
+        generateValue: true
+      # ── outgoing email through Resend
+      - key: SMTP_HOST
+        value: smtp.resend.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_SECURE
+        value: "true"
+      - key: SMTP_USER
+        value: resend
+      - key: SMTP_PASS
+        sync: false
+      - key: MAIL_FROM
+        value: HK DevLab <website@hkdevlab.com>
+      - key: MAIL_TO
+        value: contact@hkdevlab.com
+      # Optional, add later in the dashboard when you enable "Continue with Google":
+      #   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, PUBLIC_URL=https://hkdevlab.com
