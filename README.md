@@ -83,7 +83,23 @@ an enquiry (the Enquiries list shows a "notified / email not sent" badge).
 `MAIL_FROM="HK DevLab <website@hkdevlab.com>"`, `MAIL_TO=contact@hkdevlab.com` (Cloudflare forwards it to your inbox).
 Other mailboxes (Google Workspace `smtp.gmail.com:587` with an app password, Zoho `smtp.zoho.com:587`, …) work too.
 
-## Deploying
+## Deploying on Render (recommended)
+
+The site, API and `/admin` are ONE Node server, so it needs a host that runs Node — not a static host (on static hosts such as
+Vercel/Netlify `/admin` and `/api/*` simply return 404 and the contact form cannot work).
+
+1. Create a PostgreSQL database (e.g. [Neon](https://neon.tech) free tier) and copy its connection string (`postgres://…`).
+2. Render dashboard → **New → Blueprint** → pick this GitHub repo. Render reads [`render.yaml`](render.yaml) and asks for the values
+   marked secret: `DATABASE_URL` and `SMTP_PASS` (your Resend API key). `SETUP_TOKEN` and `IP_HASH_SALT` are generated for you.
+3. When the first deploy is live, check `https://<service>.onrender.com/api/health` → `"ok": true` and `postgres`.
+4. Open `/admin`, enter the `SETUP_TOKEN` (Render → service → Environment) and create your account — **you become the admin**.
+5. Custom domain: Render → Settings → Custom Domains, add `hkdevlab.com` + `www`, create the DNS records Render shows, and
+   remove the domain from any other host. Then (for Google sign-in) set `PUBLIC_URL=https://hkdevlab.com` and add
+   `https://hkdevlab.com/api/auth/google/callback` as an authorised redirect URI.
+
+Free web services sleep after inactivity (first request afterwards is slow) — switch the plan to *Starter* for an always-on site.
+
+### Other hosts
 
 Build once (`npm run build`), then run `npm start`. Works on Render, Railway, Fly, a VPS…
 **Ephemeral disks** (Render/Railway/Fly free tiers) erase a SQLite file on every deploy — there, set `DATABASE_URL` to a

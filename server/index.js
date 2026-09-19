@@ -21,7 +21,14 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 const HASH_SALT = process.env.IP_HASH_SALT || 'hkdevlab';
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
 
-const store = await createStore();
+let store;
+try { store = await createStore(); } catch (e) {
+  // never echo DATABASE_URL itself — it contains the password
+  console.error(`\nCould not open the database: ${e.code || e.message}\n${process.env.DATABASE_URL
+    ? 'Check DATABASE_URL (the full postgres://… connection string from Neon/Render, copied exactly).'
+    : 'Check SQLITE_PATH and that the folder is writable.'}\n`);
+  process.exit(1);
+}
 const mailer = createMailer();
 const app = express();
 app.disable('x-powered-by');
