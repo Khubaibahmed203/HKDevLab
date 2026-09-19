@@ -1,0 +1,89 @@
+{
+  "seo": {
+    "title": "HK DevLab — Web, AI & Software Solutions",
+    "description": "HK DevLab is a digital development studio that builds modern websites, web applications and custom digital experiences for startups, small businesses and growing brands."
+  },
+  "hero": {
+    "eyebrow": "Welcome to the lab",
+    "chips": ["Web", "AI", "Software", "Solutions"],
+    "lede": "A digital development studio building modern websites, web applications and custom digital experiences for startups and growing businesses.",
+    "ctaPrimary": { "label": "Start a project", "href": "#contact" },
+    "ctaSecondary": { "label": "See our work", "href": "#work" },
+    "sideLeft": ["Ideas", "Design", "Build", "Launch"],
+    "sideRight": ["Fast", "Responsive", "Reliable"]
+  },
+  "lab": {
+    "eyebrow": "01 — The Lab",
+    "statement": "HK DevLab turns ideas into *fast*, *responsive*, *user-friendly* products — with clean design and *reliable* development.",
+    "stackEyebrow": "Our stack",
+    "stackTitle": "One lab.\nEvery layer.",
+    "tiles": [
+      { "text": "React", "hot": false },
+      { "text": "Next.js", "hot": false },
+      { "text": "TypeScript", "hot": false },
+      { "text": "Node.js", "hot": false },
+      { "text": "Python", "hot": false },
+      { "text": "AI & LLMs", "hot": true },
+      { "text": "Automation", "hot": false },
+      { "text": "APIs", "hot": false },
+      { "text": "Databases", "hot": false },
+      { "text": "Cloud", "hot": false },
+      { "text": "UI / UX", "hot": false },
+      { "text": "Performance", "hot": false }
+    ],
+    "services": [
+      { "icon": "monitor", "title": "Websites", "text": "Fast, responsive sites that make a sharp first impression and turn visitors into customers." },
+      { "icon": "dashboard", "title": "Web Applications", "text": "Dashboards, portals and SaaS products designed around real users and built to scale." },
+      { "icon": "cpu", "title": "AI Solutions", "text": "Assistants, automation and AI features that take repetitive work off your team's plate." },
+      { "icon": "code", "title": "Custom Software", "text": "Tailored tools and integrations shaped around how your business actually runs." }
+    ],
+    "principles": [
+      { "icon": "zap", "title": "Fast", "text": "Performance is a feature, not an afterthought." },
+      { "icon": "devices", "title": "Responsive", "text": "Flawless on every screen, from phone to widescreen." },
+      { "icon": "heart", "title": "User-friendly", "text": "Clear, intuitive interfaces people enjoy using." },
+      { "icon": "shield", "title": "Reliable", "text": "Clean, tested code you can depend on and build on." }
+    ]
+  },
+  "process": {
+    "eyebrow": "02 — Process",
+    "title": "From idea\nto launch",
+    "hint": "Scroll\nto move through\nthe process",
+    "steps": [
+      { "title": "Discover", "text": "We learn your business, your customers and what success looks like — so every decision after this has a reason.", "tags": ["Goals", "Audience", "Scope"] },
+      { "title": "Design", "text": "From wireframes to polished UI. Clean, clear and on-brand, with your feedback built into every round.", "tags": ["Wireframes", "UI design", "Prototype"] },
+      { "title": "Build", "text": "Modern, tested code. Fast pages, accessible interfaces and foundations that scale when you do.", "tags": ["Front-end", "Back-end", "AI & integrations"] },
+      { "title": "Launch", "text": "We deploy, test in the real world and hand over everything you need to run it with confidence.", "tags": ["Deploy", "QA", "Handover"] },
+      { "title": "Grow", "text": "Launch is the start. We keep improving with real data — new features, better performance, ongoing support.", "tags": ["Iterate", "Support", "Scale"] }
+    ]
+  },
+  "work": {
+    "eyebrow": "03 — Work",
+    "title": "Selected concepts",
+    "note": "Sample concepts showing the kind of work we build. Real case studies are on the way.",
+    "items": [
+      { "name": "Aura Coffee", "meta": "Website · Online ordering", "url": "auracoffee.co", "kind": "hero", "a": "#ffb547", "b": "#ff7a1a", "title": "Coffee, delivered\nat its best.", "sub": "Small-batch roasts, ordered in seconds.", "cta": "Order now", "nav": ["Menu", "Story", "Visit"], "kpis": [], "bars": [], "chat": [] },
+      { "name": "LedgerLite", "meta": "Web app · Finance dashboard", "url": "app.ledgerlite.io", "kind": "dash", "a": "#12a6ff", "b": "#0b74ff", "title": "", "sub": "", "cta": "", "nav": [], "kpis": [{ "label": "Revenue", "value": "$48.2k" }, { "label": "Invoices", "value": "126" }, { "label": "Growth", "value": "+18%" }], "bars": [38, 54, 46, 68, 60, 82, 74, 92], "chat": [] },
+      { "name": "Nova Assistant", "meta": "AI · Customer-support chatbot", "url": "nova.support", "kind": "chat", "a": "#9d8bff", "b": "#5b3bff", "title": "", "sub": "", "cta": "", "nav": [], "kpis": [], "bars": [], "chat": [{ "text": "Where is my order?", "mine": true }, { "text": "Order #4821 ships today — tracking sent to your email.", "mine": false }, { "text": "Can I change the address?", "mine": true }] },
+      { "name": "Bloom Florals", "meta": "Website · E-commerce store", "url": "bloomflorals.shop", "kind": "shop", "a": "#ff6fae", "b": "#c21f73", "title": "Fresh blooms,\nsame-day.", "sub": "", "cta": "", "nav": ["Shop", "Weddings", "Cart"], "kpis": [], "bars": [], "chat": [] },
+      { "name": "Peak Fitness", "meta": "Web app · Booking platform", "url": "peakfit.club", "kind": "hero", "a": "#5be37d", "b": "#17a34a", "title": "Book. Train.\nRepeat.", "sub": "Classes, coaches and memberships in one place.", "cta": "Book a class", "nav": ["Classes", "Coaches", "Join"], "kpis": [], "bars": [], "chat": [] },
+      { "name": "FleetPulse", "meta": "Custom software · Logistics", "url": "fleetpulse.app", "kind": "dash", "a": "#22d3c5", "b": "#0e8f7e", "title": "", "sub": "", "cta": "", "nav": [], "kpis": [{ "label": "Vehicles", "value": "84" }, { "label": "On time", "value": "97%" }, { "label": "Alerts", "value": "3" }], "bars": [60, 48, 72, 58, 80, 66, 88, 70], "chat": [] },
+      { "name": "Studio Mira", "meta": "Website · Personal brand", "url": "studiomira.com", "kind": "hero", "a": "#1de4ff", "b": "#0b74ff", "title": "Design with\nintention.", "sub": "Brand and product design for bold founders.", "cta": "View work", "nav": ["Work", "About", "Contact"], "kpis": [], "bars": [], "chat": [] }
+    ]
+  },
+  "who": {
+    "eyebrow": "04 — Built for",
+    "items": ["Startups", "Small businesses", "Entrepreneurs", "Personal brands", "Growing companies"]
+  },
+  "contact": {
+    "eyebrow": "05 — Contact",
+    "title": "Let's build\nwhat's next.",
+    "lede": "Tell us about your idea, your business or the problem you want to solve. We'll reply with honest next steps — no jargon, no pressure.",
+    "email": "contact@hkdevlab.com",
+    "socials": [],
+    "location": "",
+    "formTypes": ["A new website", "A web application", "AI / automation", "Custom software", "Not sure yet"]
+  },
+  "footer": {
+    "copyright": "HK DevLab. All rights reserved."
+  }
+}

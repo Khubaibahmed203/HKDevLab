@@ -1,0 +1,33 @@
+{
+  "name": "hkdevlab-site",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n web,api -c cyan,magenta \"vite\" \"node --watch-path=./server server/index.js --port=8788\"",
+    "dev:web": "vite",
+    "dev:api": "node --watch-path=./server server/index.js --port=8788",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "preview": "vite preview",
+    "reset-password": "node server/reset-password.js"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.1.0",
+    "@fontsource-variable/sora": "^5.1.0",
+    "@fontsource/jetbrains-mono": "^5.1.0",
+    "express": "^5.2.1",
+    "gsap": "^3.12.5",
+    "lenis": "^1.1.13",
+    "nodemailer": "^10.0.10",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "pg-mem": "^3.0.14",
+    "vite": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}
