@@ -24,6 +24,7 @@ complete it becomes the admin**, and setup then closes permanently. Everyone els
 |---|---|---|
 | **Site content** | Edit every section of the public site — hero text, statement, tech tiles, services, principles, process steps, projects (the browser windows in the 3D ring), audience band, contact details & form options, footer, SEO title/description. Add, remove and reorder items. **Changes go live the moment you save.** | admin, editor |
 | **History** | Every save is kept (latest 40). Restore any earlier version in one click. | admin, editor |
+| **SEO** | Run a rule-based technical-SEO audit of the homepage (title/description length, canonical, Open Graph, Twitter tags, headings, image alt text, broken anchor links, JSON-LD, robots.txt/sitemap) and browse the score and findings by severity. Read-only for now — see [SEO (Phase 1)](#seo-phase-1--technical-foundation) below. | admin, editor |
 | **Enquiries** | Contact-form messages: mark new / read / replied / spam, reply by email, delete, export CSV. | admin, editor |
 | **Users** | Add people, set roles, reset passwords, remove access. | admin only |
 | **Account** | Change your own password. | everyone |
@@ -76,6 +77,32 @@ visitor ─► POST /api/contact ─► validate ─► rate-limit / honeypot / 
 ```
 The visitor is answered as soon as the message is stored; email is sent in the background, so a mail outage never loses
 an enquiry (the Enquiries list shows a "notified / email not sent" badge).
+
+## SEO (Phase 1 — technical foundation)
+
+The homepage's `<title>`, canonical, Open Graph, Twitter and JSON-LD tags are all computed from the same
+`content.seo` (and `content.lab.services`/`content.contact.email`) the CMS already edits, by one shared function
+(`content/seo.js`'s `injectSeo()`) — the Node-server path renders it into the HTML before sending, and
+`src/render.js` keeps the live DOM in sync client-side too, so nothing needs the CMS content twice. The
+production origin (`https://hkdevlab.com` by default) comes from `PUBLIC_URL`, the same setting used for Google
+sign-in — never hardcoded per-tag, and never guessed from the request host, so a preview/staging deployment
+still declares the real production URL as canonical.
+
+`public/sitemap.xml` lists the one public URL the site has today; `robots.txt` points at it. Both are meant to
+grow — once real service/blog/case-study pages exist, the sitemap becomes generated rather than static.
+
+`server/seo/` is a rule-based (no LLM, no network crawl) technical-SEO analyzer: it renders the homepage
+in-process through the same `injectSeo()`, reads `robots.txt`/`sitemap.xml` off disk, and checks metadata
+completeness, heading structure, image alt text, dead anchor links, JSON-LD validity and crawlability —
+exposed at `/api/admin/seo/scan` (POST), `/api/admin/seo/scans/:id` / `/scans/latest` (GET) and
+`/api/admin/seo/issues` (GET), all behind the same auth/CSRF/rate-limiting as the rest of `/api/admin`. Findings
+are stored (`websites`/`pages`/`seo_audits`/`seo_issues` — scoped by `website_id` from the start, so a second
+site later is an additional row, not a rewrite) and browsable under **Admin → SEO**, but nothing here writes to
+production content automatically; that stays a later phase, behind its own human-approval step.
+
+Tests: `node server/test-seo.mjs` covers the metadata/JSON-LD builder, the analyzer's rules and the
+`/api/admin/seo/*` endpoints; `node server/test-pg.mjs` (below) also exercises the same SEO tables over the
+PostgreSQL code path.
 
 ## Settings (`.env` locally, your host's environment variables in production)
 
@@ -173,10 +200,14 @@ formulas · no raw IPs stored.
 ```
 index.html · src/ (main.js, render.js, modules/, styles/)        the public site
 content/  default.json (initial content) · schema.js (the ONE definition of every editable field — used by the
-          admin forms and by server-side validation)
-server/   index.js · auth.js · db.js · content.js · mail.js · validate.js · admin/ (the portal UI)
-public/   brand/ (logos), robots.txt
+          admin forms and by server-side validation) · seo.js (title/canonical/OG/Twitter/JSON-LD, shared by
+          the server and the browser)
+server/   index.js · auth.js · db.js · content.js · mail.js · validate.js · admin/ (the portal UI) ·
+          seo/ (rule-based technical-SEO analyzer — crawl.js, analyzers.js, jobs.js, routes.js)
+public/   brand/ (logos), robots.txt, sitemap.xml
 ```
 Tests: `node server/test-media.mjs` covers photo uploads (auth, type sniffing, size, serving, content validation) ·
-`node server/test-pg.mjs` exercises the PostgreSQL code path (in-memory emulator) · `node server/test-google.mjs` runs the whole
-Google sign-in flow against a fake Google server (PKCE, state, nonce, invites, replays, tampering).
+`node server/test-pg.mjs` exercises the PostgreSQL code path (in-memory emulator), including the SEO tables ·
+`node server/test-google.mjs` runs the whole Google sign-in flow against a fake Google server (PKCE, state, nonce,
+invites, replays, tampering) · `node server/test-seo.mjs` covers the SEO metadata builder, the rule-based
+analyzer and the `/api/admin/seo/*` endpoints.

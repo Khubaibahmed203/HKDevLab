@@ -168,7 +168,7 @@ function showApp() {
   clear(app);
   const nav = h('nav', { class: 'nav', 'aria-label': 'Sections' });
   const main = h('main', { id: 'main' });
-  const tabs = [['content', 'Site content'], ['enquiries', 'Enquiries'], ...(me.role === 'admin' ? [['users', 'Users']] : []), ['account', 'Account']];
+  const tabs = [['content', 'Site content'], ['enquiries', 'Enquiries'], ['seo', 'SEO'], ...(me.role === 'admin' ? [['users', 'Users']] : []), ['account', 'Account']];
   const drawNav = (newCount) => {
     clear(nav);
     tabs.forEach(([key, label]) => {
@@ -193,7 +193,7 @@ function showApp() {
 }
 function render() {
   const main = $('#main'); clear(main);
-  ({ content: renderContent, enquiries: renderEnquiries, users: renderUsers, account: renderAccount })[view](main);
+  ({ content: renderContent, enquiries: renderEnquiries, seo: renderSeo, users: renderUsers, account: renderAccount })[view](main);
 }
 
 /* ───────────── content editor (built from the shared schema) ───────────── */
@@ -478,6 +478,71 @@ function enquiryCard(item, reload) {
       h('a', { class: 'btn btn--sm', href: `mailto:${item.email}?subject=${encodeURIComponent('Re: your HK DevLab enquiry')}`, text: 'Reply by email' }),
       h('button', { class: 'btn btn--sm btn--danger', type: 'button', text: 'Delete', onclick: async () => { if (confirm(`Permanently delete enquiry #${item.id} from ${item.name}?`)) { await api('DELETE', `/api/admin/enquiries/${item.id}`); reload(); } } }),
       h('span', { class: `pill ${item.email_sent ? 'ok' : 'bad'}`, text: item.email_sent ? 'notified' : 'email not sent' })));
+}
+
+/* ───────────── SEO ─────────────
+   Phase 1: a read-only audit dashboard over the rule-based analyzer. No AI recommendations, no way to change
+   production content from here yet — that stays a later phase, behind its own approval step. */
+let seoSeverity = '', seoStatus = '';
+const SEO_SEVERITIES = ['critical', 'warning', 'info'];
+const SEO_STATUSES = ['open', 'acknowledged', 'dismissed', 'resolved'];
+
+async function renderSeo(main) {
+  const summary = h('div', { class: 'panel' });
+  const sevTabs = h('div', { class: 'tabs', role: 'group', 'aria-label': 'Filter by severity' });
+  const statusSel = h('select', { 'aria-label': 'Filter by status' },
+    h('option', { value: '', text: 'All statuses' }), SEO_STATUSES.map((s) => h('option', { value: s, text: s })));
+  const list = h('div', {});
+  const runBtn = h('button', { class: 'btn btn--primary', type: 'button', text: 'Run SEO audit' });
+
+  main.append(
+    h('h1', { class: 'page-title' }, 'SEO', h('small', { text: 'Technical SEO health of the public homepage, checked against deterministic rules — not an AI layer yet.' })),
+    summary, h('div', { class: 'row' }, runBtn), sevTabs, h('div', { class: 'row' }, statusSel), list);
+
+  function drawSummary(audit) {
+    clear(summary);
+    if (!audit) { summary.append(h('p', { class: 'empty', text: 'No audit has been run yet.' })); return; }
+    const scoreText = audit.status === 'running' ? 'Running…' : audit.status === 'failed' ? 'Failed' : `Score: ${audit.score}/100`;
+    summary.append(h('p', {}, h('b', { text: scoreText }), ' ',
+      h('span', { class: 'meta', text: `${audit.status} · started ${fmtDate(audit.started_at)}${audit.finished_at ? ` · finished ${fmtDate(audit.finished_at)}` : ''}${audit.summary ? ` · ${audit.summary}` : ''}` })));
+  }
+
+  function drawSevTabs() {
+    sevTabs.replaceChildren(...[['', 'All'], ...SEO_SEVERITIES.map((s) => [s, s[0].toUpperCase() + s.slice(1)])].map(([key, label]) =>
+      h('button', { class: 'tab', type: 'button', 'aria-pressed': String(seoSeverity === key), onclick: () => { seoSeverity = key; loadIssues(); } }, label)));
+  }
+
+  async function loadIssues() {
+    drawSevTabs();
+    const qs = new URLSearchParams();
+    if (seoSeverity) qs.set('severity', seoSeverity);
+    if (seoStatus) qs.set('status', seoStatus);
+    const r = await api('GET', `/api/admin/seo/issues${qs.toString() ? `?${qs}` : ''}`);
+    if (!r.ok) return list.replaceChildren(h('p', { class: 'empty', text: 'Could not load issues.' }));
+    list.replaceChildren(...(r.data.issues.length ? r.data.issues.map(seoIssueCard) : [h('p', { class: 'empty', text: 'No issues match this filter.' })]));
+  }
+  statusSel.onchange = () => { seoStatus = statusSel.value; loadIssues(); };
+
+  runBtn.onclick = async () => {
+    runBtn.disabled = true; runBtn.textContent = 'Scanning…';
+    const r = await api('POST', '/api/admin/seo/scan');
+    runBtn.disabled = false; runBtn.textContent = 'Run SEO audit';
+    if (!r.ok) return toast(r.data.error || 'Could not run the audit.', true);
+    drawSummary(r.data.audit);
+    toast(`Audit complete — score ${r.data.audit.score}/100, ${r.data.audit.issueCount} issue(s) found.`);
+    loadIssues();
+  };
+
+  const latest = await api('GET', '/api/admin/seo/scans/latest');
+  drawSummary(latest.ok ? latest.data.audit : null);
+  loadIssues();
+}
+
+function seoIssueCard(item) {
+  return h('article', { class: 'card' },
+    h('div', { class: 'head' }, h('b', { text: item.type }), h('span', { class: `pill ${item.severity}`, text: item.severity }), h('span', { class: 'meta', text: item.status })),
+    h('p', { class: 'msg', text: item.detail }),
+    item.recommendation ? h('p', { class: 'meta', text: item.recommendation }) : null);
 }
 
 /* ───────────── users (admins) ───────────── */

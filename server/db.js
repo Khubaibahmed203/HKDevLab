@@ -75,11 +75,34 @@ export async function createStore({ pool } = {}) {
     `CREATE TABLE IF NOT EXISTS media (
        id TEXT PRIMARY KEY, mime TEXT NOT NULL, data TEXT NOT NULL,
        size INTEGER NOT NULL, created_at TEXT NOT NULL, created_by TEXT)`,
+    // SEO Agent foundation (Phase 1): one row per managed site today, shaped so a second site is just another row.
+    `CREATE TABLE IF NOT EXISTS websites (
+       id ${db.pk}, domain TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+       created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS pages (
+       id ${db.pk}, website_id BIGINT NOT NULL, url TEXT NOT NULL, title TEXT, description TEXT,
+       status_code INTEGER, last_crawled_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+       UNIQUE (website_id, url))`,
+    'CREATE INDEX IF NOT EXISTS idx_pages_website ON pages (website_id)',
+    `CREATE TABLE IF NOT EXISTS seo_audits (
+       id ${db.pk}, website_id BIGINT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+       score INTEGER, status TEXT NOT NULL DEFAULT 'running', summary TEXT)`,
+    'CREATE INDEX IF NOT EXISTS idx_seo_audits_website ON seo_audits (website_id)',
+    `CREATE TABLE IF NOT EXISTS seo_issues (
+       id ${db.pk}, website_id BIGINT NOT NULL, audit_id BIGINT NOT NULL, page_id BIGINT,
+       type TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+       detail TEXT, recommendation TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS idx_seo_issues_audit ON seo_issues (audit_id)',
+    'CREATE INDEX IF NOT EXISTS idx_seo_issues_website ON seo_issues (website_id)',
   ].join(';\n'));
   // databases created before Google sign-in existed lack this column
   try { await db.exec(`ALTER TABLE users ADD COLUMN ${db.kind === 'postgres' ? 'IF NOT EXISTS ' : ''}google_sub TEXT`); } catch { /* already there */ }
 
   const enq = (r) => ({ ...r, id: Number(r.id), email_sent: !!Number(r.email_sent) });
+  const website = (r) => r && { ...r, id: Number(r.id) };
+  const page = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id) };
+  const audit = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), score: r.score == null ? null : Number(r.score) };
+  const seoIssue = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), audit_id: Number(r.audit_id), page_id: r.page_id == null ? null : Number(r.page_id) };
   const user = (r) => r && {
     id: Number(r.id), email: r.email, name: r.name, role: r.role, created_at: r.created_at, last_login_at: r.last_login_at,
     hasPassword: String(r.password_hash || '').startsWith('scrypt:'), googleLinked: !!r.google_sub,
@@ -201,6 +224,62 @@ export async function createStore({ pool } = {}) {
     async getMedia(id) {
       const r = (await db.all('SELECT mime, data FROM media WHERE id = ?', [id]))[0];
       return r ? { mime: r.mime, bytes: Buffer.from(r.data, 'base64') } : null;
+    },
+
+    /* SEO Agent foundation (Phase 1) — websites */
+    async ensureWebsite(domain, name) {
+      const existing = (await db.all('SELECT * FROM websites WHERE domain = ?', [domain]))[0];
+      if (existing) return website(existing);
+      const at = now();
+      const id = await db.insert('INSERT INTO websites (domain,name,created_at,updated_at) VALUES (?,?,?,?)', [domain, name, at, at]);
+      return { id, domain, name, created_at: at, updated_at: at };
+    },
+    async getWebsite(id) { return website((await db.all('SELECT * FROM websites WHERE id = ?', [id]))[0]); },
+
+    /* pages (one crawlable URL per website — Phase 1 only ever writes the homepage) */
+    async upsertPage({ websiteId, url, title, description, statusCode }) {
+      const at = now();
+      const existing = (await db.all('SELECT id FROM pages WHERE website_id = ? AND url = ?', [websiteId, url]))[0];
+      if (existing) {
+        await db.run('UPDATE pages SET title = ?, description = ?, status_code = ?, last_crawled_at = ?, updated_at = ? WHERE id = ?',
+          [title || null, description || null, statusCode ?? null, at, at, existing.id]);
+        return Number(existing.id);
+      }
+      return db.insert('INSERT INTO pages (website_id,url,title,description,status_code,last_crawled_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)',
+        [websiteId, url, title || null, description || null, statusCode ?? null, at, at, at]);
+    },
+    async listPages(websiteId) { return (await db.all('SELECT * FROM pages WHERE website_id = ? ORDER BY id', [websiteId])).map(page); },
+
+    /* SEO audits (one row per SCAN→ANALYZE run) */
+    async createAudit(websiteId) {
+      const at = now();
+      const id = await db.insert("INSERT INTO seo_audits (website_id,started_at,status) VALUES (?,?,'running')", [websiteId, at]);
+      return { id, website_id: websiteId, started_at: at, finished_at: null, score: null, status: 'running', summary: null };
+    },
+    async finishAudit(id, { score, status, summary }) {
+      await db.run('UPDATE seo_audits SET finished_at = ?, score = ?, status = ?, summary = ? WHERE id = ?', [now(), score ?? null, status, summary || null, id]);
+    },
+    async getAudit(id) { return audit((await db.all('SELECT * FROM seo_audits WHERE id = ?', [id]))[0]); },
+    async latestAudit(websiteId) { return audit((await db.all('SELECT * FROM seo_audits WHERE website_id = ? ORDER BY id DESC LIMIT 1', [websiteId]))[0]); },
+
+    /* SEO issues (findings from one audit) */
+    async createIssues(websiteId, auditId, issues) {
+      const at = now();
+      for (const it of issues) {
+        await db.run(
+          'INSERT INTO seo_issues (website_id,audit_id,page_id,type,severity,status,detail,recommendation,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [websiteId, auditId, it.pageId ?? null, it.type, it.severity, 'open', it.detail ?? null, it.recommendation ?? null, at, at]);
+      }
+    },
+    async listIssues({ websiteId, auditId, severity, status, limit = 200, offset = 0 } = {}) {
+      const clauses = [], params = [];
+      if (websiteId) { clauses.push('website_id = ?'); params.push(websiteId); }
+      if (auditId) { clauses.push('audit_id = ?'); params.push(auditId); }
+      if (severity) { clauses.push('severity = ?'); params.push(severity); }
+      if (status) { clauses.push('status = ?'); params.push(status); }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+      const rows = await db.all(`SELECT * FROM seo_issues ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, [...params, limit, offset]);
+      return rows.map(seoIssue);
     },
   };
 }

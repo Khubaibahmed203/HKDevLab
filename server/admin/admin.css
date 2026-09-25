@@ -99,6 +99,7 @@ details.item > .body { padding:16px 14px; border-top:1px solid var(--line); marg
 .msg { white-space:pre-wrap; margin:12px 0; padding-left:12px; border-left:3px solid var(--blue); overflow-wrap:anywhere; }
 .pill { font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; padding:3px 10px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
 .pill.ok { color:var(--ok); border-color:rgba(110,231,161,.4); } .pill.bad { color:var(--bad); border-color:rgba(255,157,176,.4); }
+.pill.critical { color:var(--bad); border-color:rgba(255,157,176,.4); } .pill.warning { color:#ffd27a; border-color:rgba(255,210,122,.4); } .pill.info { color:var(--sky); border-color:rgba(18,166,255,.4); }
 .empty { color:var(--muted); text-align:center; padding:48px 0; }
 .two { display:grid; gap:20px; grid-template-columns:1fr; } @media (min-width:900px){ .two { grid-template-columns:1.4fr 1fr; align-items:start; } }
 .ulist li { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); } .ulist li:last-child { border-bottom:0; }

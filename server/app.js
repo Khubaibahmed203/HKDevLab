@@ -10,10 +10,11 @@ import { createAuth } from './auth.js';
 import { createGoogle } from './google.js';
 import { createLimiter } from './limits.js';
 import { DEFAULT_CONTENT, sanitizeContent, withDefaults } from './content.js';
+import { createSeoRouter } from './seo/routes.js';
+import { injectSeo } from '../content/seo.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(root, 'dist');
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /**
  * Builds the whole Express app. It runs in two places:
@@ -133,6 +134,7 @@ export async function createApp() {
   const admin = express.Router();
   admin.use(auth.requireUser, express.json({ limit: '300kb' }), auth.csrf);
   admin.use('/users', auth.users);
+  admin.use('/seo', createSeoRouter(store, { limiter }));
 
   // enquiries (admins and editors)
   admin.get('/enquiries', asyncH(async (req, res) => {
@@ -222,12 +224,10 @@ export async function createApp() {
     const renderIndex = ({ content, meta }) => {
       if (indexCache && indexCache.stamp === meta.updatedAt) return indexCache.html;
       const safeJson = JSON.stringify(content).replace(/</g, `${String.fromCharCode(92)}u003c`);   // can't break out of the <script>
-      const html = readFileSync(resolve(dist, 'index.html'), 'utf8')
-        .replace('<!--SITE_CONTENT-->', `<script type="application/json" id="site-content">${safeJson}</script>`)
-        .replace(/<title>[\s\S]*?<\/title>/, () => `<title>${esc(content.seo.title)}</title>`)
-        .replace(/(<meta name="description" content=")[^"]*(")/, (m, a, b) => `${a}${esc(content.seo.description)}${b}`)
-        .replace(/(<meta property="og:title" content=")[^"]*(")/, (m, a, b) => `${a}${esc(content.seo.title)}${b}`)
-        .replace(/(<meta property="og:description" content=")[^"]*(")/, (m, a, b) => `${a}${esc(content.seo.description)}${b}`);
+      const withContent = readFileSync(resolve(dist, 'index.html'), 'utf8')
+        .replace('<!--SITE_CONTENT-->', `<script type="application/json" id="site-content">${safeJson}</script>`);
+      // same injectSeo() the Phase-1 SEO analyzer runs against, so what it checks and what a visitor gets can never drift apart
+      const html = injectSeo(withContent, content, process.env.PUBLIC_URL);
       indexCache = { stamp: meta.updatedAt, html };
       return html;
     };

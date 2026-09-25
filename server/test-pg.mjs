@@ -93,6 +93,35 @@ const gotPhoto = await store.getMedia('a'.repeat(32));
 ok('media: bytes round-trip exactly (incl. 0x00 and 0xFF)', gotPhoto && Buffer.isBuffer(gotPhoto.bytes) && gotPhoto.bytes.equals(photo) && gotPhoto.mime === 'image/jpeg');
 ok('media: unknown id → null', (await store.getMedia('b'.repeat(32))) === null);
 
+// SEO Agent foundation (Phase 1): websites, pages, audits, issues
+const w1 = await store.ensureWebsite('hkdevlab.com', 'HK DevLab');
+ok('ensureWebsite creates a row', typeof w1.id === 'number' && w1.domain === 'hkdevlab.com');
+const w2 = await store.ensureWebsite('hkdevlab.com', 'HK DevLab');
+ok('ensureWebsite is idempotent (same domain → same row)', w2.id === w1.id);
+ok('getWebsite', (await store.getWebsite(w1.id)).domain === 'hkdevlab.com');
+
+const pageId = await store.upsertPage({ websiteId: w1.id, url: 'https://hkdevlab.com/', title: 'T', description: 'D', statusCode: 200 });
+ok('upsertPage inserts', typeof pageId === 'number');
+const pageId2 = await store.upsertPage({ websiteId: w1.id, url: 'https://hkdevlab.com/', title: 'T2', description: 'D2', statusCode: 200 });
+ok('upsertPage updates the same row for the same (website, url)', pageId2 === pageId);
+ok('listPages reflects the update', (await store.listPages(w1.id))[0].title === 'T2');
+
+const auditRow = await store.createAudit(w1.id);
+ok('createAudit starts running', auditRow.status === 'running' && typeof auditRow.id === 'number');
+await store.createIssues(w1.id, auditRow.id, [
+  { type: 'missing-title', severity: 'critical', detail: 'x', recommendation: 'y' },
+  { type: 'title-length', severity: 'warning', detail: 'x', recommendation: null },
+]);
+await store.finishAudit(auditRow.id, { score: 80, status: 'complete', summary: '2 issue(s) found.' });
+const finished = await store.getAudit(auditRow.id);
+ok('finishAudit + getAudit', finished.status === 'complete' && finished.score === 80 && !!finished.finished_at);
+ok('latestAudit returns the same row', (await store.latestAudit(w1.id)).id === auditRow.id);
+
+const allIssues = await store.listIssues({ websiteId: w1.id });
+ok('listIssues returns both issues, newest first', allIssues.length === 2 && allIssues[0].type === 'title-length');
+const critOnly = await store.listIssues({ websiteId: w1.id, severity: 'critical' });
+ok('listIssues filters by severity', critOnly.length === 1 && critOnly[0].type === 'missing-title');
+
 // cleanup
 ok('deleteUser', (await store.deleteUser(uid)) === true && (await store.userCount()) === 0);
 ok('remove enquiry', (await store.remove(id)) === true && (await store.list()).length === 0);

@@ -1,4 +1,5 @@
 import { iconEl } from './icons.js';
+import { buildMeta, buildJsonLd } from '../content/seo.js';
 
 /**
  * Fills the page from the site content (edited in /admin).
@@ -28,6 +29,7 @@ export function lines(text) {
 }
 const set = (el, ...kids) => el && el.replaceChildren(...kids);
 const setText = (sel, v) => { const el = $(sel); if (el) el.textContent = v; };
+const setAttr = (sel, attr, v) => { const el = $(sel); if (el) el.setAttribute(attr, v); };
 const safeHref = (v) => (/^(#[\w-]*|\/[^\s]*|https?:\/\/[^\s"'<>]+|mailto:[^\s"'<>]+)$/i.test(v) ? v : '#');
 
 // where each stack tile floats in the 3D fly-through (x, y in vw / vh from centre)
@@ -90,6 +92,15 @@ function applyFounders(f) {
 export function applyContent(c) {
   document.title = c.seo.title;
   $('meta[name="description"]')?.setAttribute('content', c.seo.description);
+  // canonical/og:url/og:image are environment-driven (the production domain), already correct as static
+  // defaults in the HTML — only the content-driven fields need updating here to match the server-side path.
+  const meta = buildMeta(c);
+  setAttr('meta[property="og:title"]', 'content', meta.title);
+  setAttr('meta[property="og:description"]', 'content', meta.description);
+  setAttr('meta[name="twitter:title"]', 'content', meta.title);
+  setAttr('meta[name="twitter:description"]', 'content', meta.description);
+  const ld = document.getElementById('ld-json');
+  if (ld) ld.textContent = JSON.stringify(buildJsonLd(c));
 
   /* hero */
   const hero = c.hero;
