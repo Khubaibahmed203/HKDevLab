@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HK DevLab — Web, AI &amp; Software Solutions</title>
+<meta name="description" content="HK DevLab is a digital development studio that builds modern websites, web applications and custom digital experiences for startups, small businesses and growing brands.">
+<meta name="theme-color" content="#000000">
+<meta property="og:type" content="website">
+<meta property="og:title" content="HK DevLab — Web, AI &amp; Software Solutions">
+<meta property="og:description" content="Fast, responsive, user-friendly digital products with clean design and reliable development.">
+<meta property="og:image" content="/brand/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="/brand/favicon.png">
+<link rel="apple-touch-icon" href="/brand/favicon.png">
+<script type="application/ld+json">
+{ "@context": "https://schema.org", "@type": "ProfessionalService", "name": "HK DevLab",
+  "description": "Digital development studio building websites, web applications, AI solutions and custom software.",
+  "email": "contact@hkdevlab.com",
+  "serviceType": ["Web development", "Web applications", "AI solutions", "Custom software"] }
+</script>
+<!--SITE_CONTENT-->
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- ───────── preloader ───────── -->
+<div class="boot" id="boot" aria-hidden="true">
+  <img class="boot__mark" src="/brand/mark.png" alt="" width="605" height="391">
+  <div class="boot__bar"><i id="bootFill"></i></div>
+</div>
+
+<div class="progress" id="progress" aria-hidden="true"></div>
+<canvas id="field" class="field" aria-hidden="true"></canvas>
+
+<!-- ───────── header ───────── -->
+<header class="hdr" id="hdr">
+  <a class="hdr__logo" href="#top" aria-label="HK DevLab — home">
+    <img src="/brand/logo-wide.png" alt="HKDevLab" width="1215" height="257">
+  </a>
+  <nav class="hdr__nav" aria-label="Primary">
+    <ul>
+      <li><a href="#lab" data-nav>The Lab</a></li>
+      <li><a href="#process" data-nav>Process</a></li>
+      <li><a href="#work" data-nav>Work</a></li>
+      <li><a href="#contact" data-nav>Contact</a></li>
+    </ul>
+  </nav>
+  <a class="btn btn--sm hdr__cta" href="#contact">Start a project</a>
+  <button class="hdr__burger" id="burger" aria-expanded="false" aria-controls="menu">
+    <span aria-hidden="true"></span><span aria-hidden="true"></span>
+    <span class="sr-only">Menu</span>
+  </button>
+</header>
+
+<nav class="menu" id="menu" aria-label="Primary, expanded" hidden>
+  <ul>
+    <li><a href="#lab" data-nav>The Lab</a></li>
+    <li><a href="#process" data-nav>Process</a></li>
+    <li><a href="#work" data-nav>Work</a></li>
+    <li><a href="#contact" data-nav>Contact</a></li>
+  </ul>
+  <p class="menu__tag">Web • AI • Software • Solutions</p>
+</nav>
+
+<main id="main">
+
+  <!-- ═════════ 1 · HERO ═════════ -->
+  <section class="hero" id="top" aria-labelledby="heroTitle">
+    <div class="hero__stage">
+      <p class="hero__eyebrow" id="heroEyebrow"><b aria-hidden="true">•••</b><span>Welcome to the lab</span><b aria-hidden="true">•••</b></p>
+
+      <div class="hero__wm">
+        <h1 class="wordmark" id="heroTitle" aria-label="HKDevLab">
+          <span class="wm wm--hk" aria-hidden="true"><i>H</i><i>K</i></span><span class="wm wm--dev" aria-hidden="true"><i>D</i><i>e</i><i>v</i></span><span class="wm wm--lab" aria-hidden="true"><i>L</i><i>a</i><i>b</i></span>
+        </h1>
+        <span class="px px--a" aria-hidden="true"></span>
+        <span class="px px--b" aria-hidden="true"></span>
+        <span class="px px--c" aria-hidden="true"></span>
+        <p class="chip chip--web" aria-hidden="true"><span>•Web•</span></p>
+        <p class="chip chip--ai" aria-hidden="true"><span>•AI•</span></p>
+        <p class="chip chip--soft" aria-hidden="true"><span>•Software•</span></p>
+        <p class="chip chip--sol" aria-hidden="true"><span>•Solutions•</span></p>
+      </div>
+
+      <div class="hero__lower" id="heroLower">
+        <p class="hero__lede" id="heroLede">
+          A digital development studio building modern websites, web applications and custom digital experiences for startups and growing businesses.
+        </p>
+        <div class="hero__cta" id="heroCta">
+          <a class="btn" href="#contact">Start a project
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+          <a class="btn btn--ghost" href="#work">See our work</a>
+        </div>
+      </div>
+
+      <ul class="hero__side hero__side--l" aria-hidden="true"><li>Ideas</li><li>Design</li><li>Build</li><li>Launch</li></ul>
+      <ul class="hero__side hero__side--r" aria-hidden="true"><li>Fast</li><li>Responsive</li><li>Reliable</li></ul>
+
+      <a class="hero__scroll" id="heroScroll" href="#lab" aria-label="Scroll to the lab">
+        <span>Scroll</span><i aria-hidden="true"></i>
+      </a>
+    </div>
+  </section>
+
+  <!-- ═════════ 2 · THE LAB ═════════ -->
+  <section class="lab" id="lab" aria-labelledby="labTitle">
+    <div class="wrap lab__intro">
+      <p class="eyebrow">01 — The Lab</p>
+      <h2 class="sr-only" id="labTitle">The Lab — what HK DevLab does</h2>
+      <p class="statement" id="statement" aria-label="HK DevLab turns ideas into fast, responsive, user-friendly products with clean design and reliable development.">
+        <span aria-hidden="true" id="statementWords">HK DevLab turns ideas into <em>fast</em>, <em>responsive</em>, <em>user-friendly</em> products — with clean design and <em>reliable</em> development.</span>
+      </p>
+    </div>
+
+    <!-- fly-through of the stack -->
+    <div class="universe" id="universe">
+      <div class="universe__pin">
+        <div class="universe__scene" id="uniScene">
+          <div class="universe__cap">
+            <p class="eyebrow">Our stack</p>
+            <h3>One lab.<br>Every layer.</h3>
+          </div>
+          <ul class="tiles" id="tiles">
+            <li class="tile" data-z="-200" data-x="-34" data-y="-18"><span>01</span>React</li>
+            <li class="tile" data-z="-340" data-x="30" data-y="-24"><span>02</span>Next.js</li>
+            <li class="tile" data-z="-520" data-x="-8" data-y="-34"><span>03</span>TypeScript</li>
+            <li class="tile" data-z="-700" data-x="-40" data-y="12"><span>04</span>Node.js</li>
+            <li class="tile" data-z="-860" data-x="36" data-y="8"><span>05</span>Python</li>
+            <li class="tile tile--hot" data-z="-1040" data-x="0" data-y="-6"><span>06</span>AI &amp; LLMs</li>
+            <li class="tile" data-z="-1220" data-x="-30" data-y="-26"><span>07</span>Automation</li>
+            <li class="tile" data-z="-1400" data-x="28" data-y="24"><span>08</span>APIs</li>
+            <li class="tile" data-z="-1580" data-x="-14" data-y="26"><span>09</span>Databases</li>
+            <li class="tile" data-z="-1760" data-x="38" data-y="-14"><span>10</span>Cloud</li>
+            <li class="tile" data-z="-1940" data-x="-36" data-y="20"><span>11</span>UI / UX</li>
+            <li class="tile" data-z="-2120" data-x="12" data-y="-2"><span>12</span>Performance</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <h3 class="sr-only">Services</h3>
+      <ul class="services" id="services">
+        <li class="card" data-spot>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <h4>Websites</h4>
+          <p>Fast, responsive sites that make a sharp first impression and turn visitors into customers.</p>
+        </li>
+        <li class="card" data-spot>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+          <h4>Web Applications</h4>
+          <p>Dashboards, portals and SaaS products designed around real users and built to scale.</p>
+        </li>
+        <li class="card" data-spot>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="10" y="10" width="4" height="4" rx=".5"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+          <h4>AI Solutions</h4>
+          <p>Assistants, automation and AI features that take repetitive work off your team's plate.</p>
+        </li>
+        <li class="card" data-spot>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/></svg>
+          <h4>Custom Software</h4>
+          <p>Tailored tools and integrations shaped around how your business actually runs.</p>
+        </li>
+      </ul>
+
+      <ul class="principles" id="principles">
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><b>Fast</b><span>Performance is a feature, not an afterthought.</span></li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="14" height="10" rx="1.5"/><rect x="15" y="9" width="7" height="12" rx="1.5"/></svg><b>Responsive</b><span>Flawless on every screen, from phone to widescreen.</span></li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-4.4-9-9.2C1.6 8 4 5 7 5c2 0 3.6 1 5 3 1.4-2 3-3 5-3 3 0 5.4 3 4 6.8-2 4.8-9 9.2-9 9.2z"/></svg><b>User-friendly</b><span>Clear, intuitive interfaces people enjoy using.</span></li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg><b>Reliable</b><span>Clean, tested code you can depend on and build on.</span></li>
+      </ul>
+    </div>
+
+    <!-- the people behind it: names, bios, links and photos all come from /admin -->
+    <section class="founders" id="founders" aria-labelledby="foundersTitle" hidden>
+      <div class="wrap">
+        <header class="founders__head">
+          <p class="eyebrow" id="foundersEyebrow">The founders</p>
+          <h2 class="founders__title" id="foundersTitle">Two founders.<br><span class="grad">One lab.</span></h2>
+          <p class="founders__intro" id="foundersIntro"></p>
+        </header>
+        <ul class="founders__grid" id="foundersGrid"></ul>
+      </div>
+    </section>
+  </section>
+
+  <!-- ═════════ 3 · PROCESS ═════════ -->
+  <section class="process" id="process" aria-labelledby="processTitle">
+    <div class="process__pin" id="processPin">
+      <div class="process__head">
+        <p class="eyebrow">02 — Process</p>
+        <h2 id="processTitle">From idea<br>to launch</h2>
+      </div>
+
+      <div class="dial" id="dial" aria-hidden="true">
+        <svg viewBox="0 0 600 600">
+          <defs>
+            <linearGradient id="dialGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#0b74ff"/><stop offset="1" stop-color="#1de4ff"/>
+            </linearGradient>
+          </defs>
+          <g id="dialRing"><circle cx="300" cy="300" r="286" class="d-line"/><g id="dialTicks"></g><circle cx="300" cy="300" r="212" class="d-line d-line--dash"/></g>
+          <circle cx="300" cy="300" r="140" class="d-line"/>
+          <g id="dialHand"><line x1="300" y1="300" x2="300" y2="34" stroke="url(#dialGrad)" stroke-width="2"/><circle cx="300" cy="34" r="7" fill="#1de4ff"/></g>
+          <circle cx="300" cy="300" r="5" fill="#fff"/>
+        </svg>
+        <div class="dial__num" id="dialNum"><span>01</span></div>
+      </div>
+
+      <ol class="steps" id="steps">
+        <li class="step" data-label="Discover">
+          <span class="step__n" aria-hidden="true">01</span>
+          <h3>Discover</h3>
+          <p>We learn your business, your customers and what success looks like — so every decision after this has a reason.</p>
+          <ul class="tags"><li>Goals</li><li>Audience</li><li>Scope</li></ul>
+        </li>
+        <li class="step" data-label="Design">
+          <span class="step__n" aria-hidden="true">02</span>
+          <h3>Design</h3>
+          <p>From wireframes to polished UI. Clean, clear and on-brand, with your feedback built into every round.</p>
+          <ul class="tags"><li>Wireframes</li><li>UI design</li><li>Prototype</li></ul>
+        </li>
+        <li class="step" data-label="Build">
+          <span class="step__n" aria-hidden="true">03</span>
+          <h3>Build</h3>
+          <p>Modern, tested code. Fast pages, accessible interfaces and foundations that scale when you do.</p>
+          <ul class="tags"><li>Front-end</li><li>Back-end</li><li>AI &amp; integrations</li></ul>
+        </li>
+        <li class="step" data-label="Launch">
+          <span class="step__n" aria-hidden="true">04</span>
+          <h3>Launch</h3>
+          <p>We deploy, test in the real world and hand over everything you need to run it with confidence.</p>
+          <ul class="tags"><li>Deploy</li><li>QA</li><li>Handover</li></ul>
+        </li>
+        <li class="step" data-label="Grow">
+          <span class="step__n" aria-hidden="true">05</span>
+          <h3>Grow</h3>
+          <p>Launch is the start. We keep improving with real data — new features, better performance, ongoing support.</p>
+          <ul class="tags"><li>Iterate</li><li>Support</li><li>Scale</li></ul>
+        </li>
+      </ol>
+
+      <div class="rail" id="rail" aria-hidden="true">
+        <i class="rail__fill" id="railFill"></i>
+        <span data-i="0">Discover</span><span data-i="1">Design</span><span data-i="2">Build</span><span data-i="3">Launch</span><span data-i="4">Grow</span>
+      </div>
+      <p class="process__hint" aria-hidden="true">Scroll<br>to move through<br>the process<i></i></p>
+    </div>
+  </section>
+
+  <!-- ═════════ 4 · WORK ═════════ -->
+  <section class="work" id="work" aria-labelledby="workTitle">
+    <div class="work__pin" id="workPin">
+      <header class="work__head">
+        <p class="eyebrow">03 — Work</p>
+        <h2 id="workTitle">Selected concepts</h2>
+        <p class="work__note">Sample concepts showing the kind of work we build. Real case studies are on the way.</p>
+      </header>
+
+      <div class="ring" id="ring">
+        <ul class="ring__inner" id="ringInner"></ul>
+        <div class="ring__floor" aria-hidden="true"></div>
+      </div>
+
+      <div class="work__cap" id="workCap" aria-live="polite">
+        <span class="work__idx"><b id="workIdx">01</b> / <span id="workTot">07</span></span>
+        <h3 id="workName">—</h3>
+        <p id="workMeta">—</p>
+      </div>
+      <p class="work__hint" aria-hidden="true">Scroll<br>Explore<br>Interact</p>
+    </div>
+  </section>
+
+  <!-- ═════════ 5 · WHO ═════════ -->
+  <section class="who" aria-label="Who we work with">
+    <p class="eyebrow wrap">04 — Built for</p>
+    <div class="marquee" id="marquee">
+      <ul class="marquee__track">
+        <li>Startups</li><li>Small businesses</li><li>Entrepreneurs</li><li>Personal brands</li><li>Growing companies</li>
+        <li aria-hidden="true">Startups</li><li aria-hidden="true">Small businesses</li><li aria-hidden="true">Entrepreneurs</li><li aria-hidden="true">Personal brands</li><li aria-hidden="true">Growing companies</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ═════════ 6 · CONTACT ═════════ -->
+  <section class="contact" id="contact" aria-labelledby="contactTitle">
+    <div class="wrap contact__grid">
+      <div class="contact__copy">
+        <p class="eyebrow">05 — Contact</p>
+        <h2 id="contactTitle">Let's build<br><span class="grad">what's next.</span></h2>
+        <p class="contact__lede">Tell us about your idea, your business or the problem you want to solve. We'll reply with honest next steps — no jargon, no pressure.</p>
+        <ul class="contact__links" id="contactLinks"></ul>
+      </div>
+
+      <form class="form" id="form" novalidate>
+        <div class="field-row">
+          <label for="fName">Your name</label>
+          <input id="fName" name="name" type="text" autocomplete="name" required>
+          <small class="err" id="eName" role="alert"></small>
+        </div>
+        <div class="field-row">
+          <label for="fEmail">Email</label>
+          <input id="fEmail" name="email" type="email" autocomplete="email" required>
+          <small class="err" id="eEmail" role="alert"></small>
+        </div>
+        <div class="field-row">
+          <label for="fType">What do you need?</label>
+          <select id="fType" name="type">
+            <option>A new website</option>
+            <option>A web application</option>
+            <option>AI / automation</option>
+            <option>Custom software</option>
+            <option>Not sure yet</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label for="fMsg">Tell us about your project</label>
+          <textarea id="fMsg" name="message" rows="5" required></textarea>
+          <small class="err" id="eMsg" role="alert"></small>
+        </div>
+        <!-- honeypot: invisible to people, tempting to bots -->
+        <div class="hp" aria-hidden="true"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+        <button class="btn btn--block" type="submit">Send message
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        <p class="form__status" id="formStatus" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot__grid">
+    <img class="foot__logo" src="/brand/logo-stacked.png" alt="HKDevLab — Web, AI, Software, Solutions" width="889" height="617" loading="lazy">
+    <nav aria-label="Footer">
+      <ul>
+        <li><a href="#lab">The Lab</a></li>
+        <li><a href="#process">Process</a></li>
+        <li><a href="#work">Work</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+    </nav>
+    <div class="foot__meta">
+      <small>&copy; <span id="year">2026</span> HK DevLab. All rights reserved.</small>
+      <button type="button" class="motion-toggle" id="motionToggle" hidden></button>
+    </div>
+  </div>
+</footer>
+
+<noscript><style>.boot{display:none!important}</style></noscript>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

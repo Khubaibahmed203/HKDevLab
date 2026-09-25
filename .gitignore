@@ -1,0 +1,22 @@
+# dependencies + build output
+node_modules/
+dist/
+
+# SECRETS and local state — never commit these
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.pem
+*.key
+
+# tooling / OS noise
+.claude/
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
