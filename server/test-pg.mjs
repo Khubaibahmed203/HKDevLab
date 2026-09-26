@@ -148,6 +148,32 @@ ok('finishAudit stores the Phase 2 crawl stats and a JSON pagespeed result', (aw
 ok('previousCompleteAudit finds the earlier complete audit, excluding the current one', (await store.previousCompleteAudit(w1.id, audit2.id)).id === auditRow.id);
 ok('listAudits returns newest first', (await store.listAudits(w1.id))[0].id === audit2.id);
 
+// Phase 2.1: async job queue primitives — a separate website row, so these don't disturb w1's audit id ordering above
+const w3 = await store.ensureWebsite('async-jobs-test.example', 'Async Jobs Test');
+const queuedRow = await store.createAudit(w3.id, { baseUrl: 'https://async-jobs-test.example', status: 'queued' });
+ok('createAudit(status: "queued") starts queued, not running', queuedRow.status === 'queued');
+ok('activeAudit finds the queued audit', (await store.activeAudit(w3.id))?.id === queuedRow.id);
+ok('claimAudit moves queued -> running and reports success', (await store.claimAudit(queuedRow.id)) === true && (await store.getAudit(queuedRow.id)).status === 'running');
+ok('claimAudit on an already-running audit fails (loses the race)', (await store.claimAudit(queuedRow.id)) === false);
+ok('claimAudit on a nonexistent audit fails', (await store.claimAudit(999999)) === false);
+await store.finishAudit(queuedRow.id, { score: 100, status: 'complete', summary: 'ok', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+ok('activeAudit is empty again once the audit is complete', (await store.activeAudit(w3.id)) == null);
+
+// createAuditIfNoneActive: the atomic duplicate-scan guard POST /scan relies on (closes the TOCTOU race a
+// separate activeAudit()-then-createAudit() would have between two near-simultaneous requests)
+const atomic1 = await store.createAuditIfNoneActive(w3.id, { baseUrl: 'https://async-jobs-test.example', pagesPlanned: 50 });
+ok('createAuditIfNoneActive succeeds when nothing is active', atomic1 && atomic1.status === 'queued');
+const atomic2 = await store.createAuditIfNoneActive(w3.id, { baseUrl: 'https://async-jobs-test.example', pagesPlanned: 50 });
+ok('…and returns null (inserts nothing) while that one is still queued/running', atomic2 === null);
+const [concA, concB] = await Promise.all([
+  store.createAuditIfNoneActive(w3.id, {}), store.createAuditIfNoneActive(w3.id, {}),
+]);
+ok('two concurrent calls racing the same website: exactly one still wins, never both', [concA, concB].filter(Boolean).length === 0);   // both blocked — atomic1 is still active
+await store.finishAudit(atomic1.id, { status: 'failed', summary: 'test cleanup' });
+const atomic3 = await store.createAuditIfNoneActive(w3.id, {});
+ok('…and succeeds again once the earlier one is no longer active', atomic3 && atomic3.status === 'queued');
+await store.finishAudit(atomic3.id, { status: 'failed', summary: 'test cleanup' });
+
 const rec = await store.createRecommendation({ websiteId: w1.id, issueId: allIssues[0].id, pageId: pageId3, type: 'title', currentValue: 'Old', proposedValue: 'New', reasoning: 'because', aiProvider: 'anthropic', aiModel: 'claude-sonnet-5' });
 ok('createRecommendation starts pending', rec.status === 'pending' && typeof rec.id === 'number');
 ok('listRecommendations finds it', (await store.listRecommendations({ websiteId: w1.id })).some((r) => r.id === rec.id));

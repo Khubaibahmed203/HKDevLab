@@ -506,6 +506,24 @@ async function renderSeo(main) {
   renderBody();
 }
 
+/** POST /scan only queues the job now (async — server/seo/jobs.js); this polls GET /scans/:id until it
+ *  leaves 'queued'/'running', up to a few minutes, and toasts the final result. */
+async function pollScan(auditId, runBtn) {
+  for (let i = 0; i < 150; i++) {
+    const r = await api('GET', `/api/admin/seo/scans/${auditId}`);
+    if (!r.ok) return toast('Could not check the scan status.', true);
+    const a = r.data.audit;
+    if (a.status === 'complete') {
+      const cmp = a.comparison;
+      return toast(`Audit complete — score ${a.score}/100, ${a.issueCount} issue(s) across ${seoFmt(a.pages_crawled)} page(s)${cmp ? ` · ${cmp.resolvedCount} resolved, ${cmp.introducedCount} new since the last scan` : ''}.`);
+    }
+    if (a.status === 'failed') return toast(`Audit failed — ${a.summary || 'unknown error'}.`, true);
+    if (runBtn) runBtn.textContent = a.status === 'queued' ? 'Queued…' : 'Crawling…';
+    await new Promise((r2) => setTimeout(r2, 2000));
+  }
+  toast('The audit is taking longer than expected — check back on this tab shortly.', true);
+}
+
 /* ── Overview: latest scan, score, crawl stats, issue counts by severity ── */
 async function seoOverview(main) {
   main.append(h('p', { class: 'boot', text: 'Loading…' }));
@@ -516,16 +534,16 @@ async function seoOverview(main) {
 
   const runBtn = h('button', { class: 'btn btn--primary', type: 'button', text: 'Run SEO audit' });
   runBtn.onclick = async () => {
-    runBtn.disabled = true; runBtn.textContent = 'Crawling…';
+    runBtn.disabled = true; runBtn.textContent = 'Queuing…';
     const r = await api('POST', '/api/admin/seo/scan');
+    if (!r.ok) { runBtn.disabled = false; runBtn.textContent = 'Run SEO audit'; return toast(r.status === 409 ? 'A scan is already queued or running for this website.' : (r.data.error || 'Could not start the audit.'), true); }
+    runBtn.textContent = 'Crawling…';
+    await pollScan(r.data.audit.id, runBtn);
     runBtn.disabled = false; runBtn.textContent = 'Run SEO audit';
-    if (!r.ok) return toast(r.data.error || 'Could not run the audit.', true);
-    const cmp = r.data.audit.comparison;
-    toast(`Audit complete — score ${r.data.audit.score}/100, ${r.data.audit.issueCount} issue(s) across ${r.data.audit.pages_crawled} page(s)${cmp ? ` · ${cmp.resolvedCount} resolved, ${cmp.introducedCount} new since the last scan` : ''}.`);
     seoOverview(main);
   };
 
-  const scoreText = !audit ? 'No audit has been run yet.' : audit.status === 'running' ? 'Running…' : audit.status === 'failed' ? `Failed — ${audit.summary || ''}` : `Score: ${audit.score}/100`;
+  const scoreText = !audit ? 'No audit has been run yet.' : audit.status === 'queued' ? 'Queued…' : audit.status === 'running' ? 'Running…' : audit.status === 'failed' ? `Failed — ${audit.summary || ''}` : `Score: ${audit.score}/100`;
   main.append(
     h('div', { class: 'panel' },
       h('h2', { text: scoreText }),

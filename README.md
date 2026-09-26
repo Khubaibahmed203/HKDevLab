@@ -92,40 +92,79 @@ still declares the real production URL as canonical.
 grow — once real service/blog/case-study pages exist, the sitemap becomes generated rather than static.
 
 **Admin → SEO** runs a real pipeline: CRAWLER → ANALYZER → ISSUES → (optional) AI RECOMMENDATION → HUMAN APPROVAL
-→ SAFE APPLY → RE-SCAN.
+→ SAFE APPLY → RE-SCAN. The crawl itself runs as an async, database-backed job (see "Async scan jobs" below).
 
 - **Crawler** (`server/seo/crawler.js`) — a real, same-domain-only breadth-first crawl over `fetch`, bounded by
   `SEO_MAX_PAGES`/`SEO_MAX_DEPTH`/`SEO_REQUEST_TIMEOUT_MS`/`SEO_CRAWL_DELAY_MS` (all optional, sensible
   defaults). Reads and respects `robots.txt` (`server/seo/robots.js`), discovers `sitemap.xml` including one
   level of sitemap-index nesting (`server/seo/sitemap.js`), and extracts each page with cheerio
   (`server/seo/extract.js`) — the one new dependency this needed, since regex HTML parsing gets unreliable
-  once pages aren't ones we hand-wrote ourselves.
+  once pages aren't ones we hand-wrote ourselves. The crawl target is always a registered `websites` row, never
+  a bare URL taken from the browser — see "Production crawl safety" below.
 - **Analyzer** (`server/seo/pageAnalyzer.js`) — deterministic, no LLM: metadata, canonical, indexability,
   headings, images, duplicate title/description/content, and the internal-link graph (orphan pages, broken
   internal links, links to redirects).
 - **AI recommendations** (`server/seo/llm.js` + `recommendations.js`) — server-side only, provider-agnostic
-  (Anthropic today, via `fetch` directly rather than an SDK), structured output only (never freeform prose),
-  crawled page content always framed as untrusted data the model must never treat as instructions. Without
-  `ANTHROPIC_API_KEY` this reports itself unavailable rather than fabricating a suggestion.
+  (Anthropic today, via `fetch` directly rather than an SDK, with its own request timeout — `SEO_LLM_TIMEOUT_MS`),
+  structured output only (never freeform prose), crawled page content always framed as untrusted data the model
+  must never treat as instructions. Without `ANTHROPIC_API_KEY` this reports itself unavailable rather than
+  fabricating a suggestion. The model id defaults to `claude-sonnet-5` and can be overridden with
+  `ANTHROPIC_MODEL` without a code change.
 - **Approval + safe apply** (`server/seo/apply.js`) — every recommendation starts `pending`; only an explicitly
   `approved` one can be applied, and only title/description recommendations can be applied automatically today
   (through the existing `sanitizeContent()`/`saveContent()` path, so it's validated and versioned like any
   admin edit). Anything else returns "manual implementation required" rather than an unsafe change.
 
+**Async scan jobs** (`server/seo/jobs.js`) — `POST /scan` only writes a `queued` `seo_audits` row and returns
+immediately (202); the HTTP request itself never crawls. There's no external queue (no Redis), and this app's
+two deployment targets behave differently, deliberately:
+- **Long-running Node** (`server/index.js` — Render, a VPS, `npm run dev`): `queueScan()` fires the crawl in
+  the background via `setImmediate` right after the row is written. The process keeps running after the
+  response is sent, so this genuinely executes off the request — it is real (if lightweight) background
+  execution, not a fallback.
+- **Vercel serverless** (`api/index.js`): a function can freeze the instant it responds, so nothing guarantees
+  that `setImmediate` callback ever gets to run — there is **no detached background worker** here, and this
+  code makes no claim otherwise. What actually finishes the job is `ensureProgressing()`, called by every poll
+  route (`GET /scans/:id`, `GET /scans/latest`): if an audit is still `queued` when polled, it runs the crawl
+  **inline, in that GET request**, as a controlled fallback, before answering. The trade-off is explicit: the
+  first poll after `POST /scan` is slower on serverless (it does the real work); every poll after that is a
+  cheap read.
+
+Both paths funnel through the same `executeScan()`, guarded by `claimAudit()` — an atomic `queued`→`running`
+compare-and-swap in `server/db.js` (a single `UPDATE ... WHERE status = 'queued'`). Whichever of the background
+kick or a poll's fallback reaches it first wins and runs the crawl; the other sees 0 rows changed and does
+nothing, so the same audit is never crawled twice, a `running`/`complete`/`failed` audit is never re-executed,
+and a `failed` job never auto-restarts (nothing ever resets it back to `queued`). States: `queued` → `running` →
+`complete` / `failed`. `POST /scan` itself is guarded the same way against a duplicate: `queueScan()` only
+inserts a new `queued` row if none is already `queued`/`running` for that website (`createAuditIfNoneActive()`,
+an atomic `INSERT … WHERE NOT EXISTS`, not a separate check-then-insert) — two near-simultaneous `POST /scan`
+calls can't both slip through; the loser gets a 409 naming the audit already in flight.
+
+**Production crawl safety** — the scan target is always resolved from a registered `websites` row, never a bare
+URL from the browser: an admin request may name a `websiteId` explicitly (refused with 404 if it doesn't exist),
+or it falls back to the one configured home website (from `PUBLIC_URL`) — the same resolution `POST /scan` has
+always used. An optional `baseUrl` must still match that website's own registered domain, or the request is
+refused (400). The crawler itself never leaves the start URL's host (external links are recorded, never
+fetched — see `server/seo/crawler.js`).
+
 Routes, all under `/api/admin/seo/*` behind the same auth/CSRF/rate-limiting as the rest of `/api/admin`:
-`POST /scan` (optionally `{ baseUrl }`), `GET /scans`, `GET /scans/latest`, `GET /scans/:id`, `GET /pages`,
-`GET /issues` (filter by `severity`/`status`/`type`/`pageId`), `POST /issues/:id/recommend`,
-`GET /recommendations`, `POST /recommendations/:id/approve|reject|apply`.
+`POST /scan` (queues a job; optionally `{ websiteId, baseUrl }`) → 202, `GET /scans`, `GET /scans/latest`,
+`GET /scans/:id` (both polled — auto-advances a still-queued job and attaches `issueCount`/`comparison` once
+complete), `GET /pages`, `GET /issues` (filter by `severity`/`status`/`type`/`pageId`),
+`POST /issues/:id/recommend`, `GET /recommendations`, `POST /recommendations/:id/approve|reject|apply`.
 
 Data lives in `websites`/`pages`/`seo_audits`/`seo_issues`/`page_links`/`seo_recommendations` — every table
 scoped by `website_id` from the start, so a second site later is an additional row, not a rewrite.
 
-Tests: `node server/test-seo.mjs` (the metadata/JSON-LD builder and the original rule-based checks) ·
+Tests: `node server/test-seo.mjs` (the metadata/JSON-LD builder, the original rule-based checks, and the async
+scan HTTP workflow — queue → poll → complete, duplicate-scan protection, unregistered-website and
+cross-domain-`baseUrl` rejection, and an explicit check that the crawl never targets the real hkdevlab.com) ·
 `node server/test-seo-crawl.mjs` (URL normalization, robots.txt, sitemap parsing, cheerio extraction, the real
 crawler against a local fixture server — same-domain-only, depth/page/timeout limits, redirects, the
 multi-page analyzer) · `node server/test-seo-recommendations.mjs` (the LLM provider mocked at the network
-boundary — never a real paid call — plus the full recommend → approve/reject → apply workflow) ·
-`node server/test-pg.mjs` (below) also exercises every SEO table over the PostgreSQL code path.
+boundary — never a real paid call — the full recommend → approve/reject → apply workflow, a provider timeout,
+and `ANTHROPIC_MODEL` overriding the model actually sent) · `node server/test-pg.mjs` (below) also exercises
+every SEO table, including the async-job primitives (`claimAudit`/`activeAudit`), over the PostgreSQL code path.
 
 ## Settings (`.env` locally, your host's environment variables in production)
 
@@ -141,6 +180,7 @@ boundary — never a real paid call — plus the full recommend → approve/reje
 | `NODE_ENV=production` | Enables HTTPS-only cookies and HSTS. Set it in production. |
 | `SEO_MAX_PAGES` `SEO_MAX_DEPTH` `SEO_REQUEST_TIMEOUT_MS` `SEO_CRAWL_DELAY_MS` | SEO crawler safety limits. All optional, sensible defaults (100 pages, depth 5, 10s timeout, 250ms delay). |
 | `ANTHROPIC_API_KEY` | Enables AI-drafted SEO recommendations. Without it, the SEO dashboard still crawls and reports issues — drafting a suggested fix just reports itself unavailable. |
+| `ANTHROPIC_MODEL` `SEO_LLM_TIMEOUT_MS` | Optional. Override the Anthropic model id (default `claude-sonnet-5`) and the AI-recommendation request timeout (default 20s). |
 | `PAGESPEED_API_KEY` | Optional real PageSpeed Insights performance scoring for the scanned homepage. Without it, performance is reported as unavailable, never a fabricated number. |
 
 **Cloudflare Email Routing** only forwards *incoming* mail and cannot send. Use a sending service such as Resend

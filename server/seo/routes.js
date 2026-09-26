@@ -1,6 +1,6 @@
 import express from 'express';
 import { siteOrigin } from '../../content/seo.js';
-import { runScan } from './jobs.js';
+import { queueScan, ensureProgressing, compareToPreviousAudit } from './jobs.js';
 import { generateRecommendation } from './recommendations.js';
 import { applyRecommendation } from './apply.js';
 
@@ -12,13 +12,15 @@ const REC_STATUSES = ['pending', 'approved', 'rejected', 'applied', 'failed'];
  * route here inherits auth.requireUser, the JSON body parser, auth.csrf, and the no-store/no-index headers
  * already applied there. No second auth system, no separate rate-limit mechanism.
  *
- * Not hardcoded to hkdevlab.com: the domain is read from PUBLIC_URL (falling back to the production
- * default) and resolved to a `websites` row at request time — a second site later is just another row.
+ * Not hardcoded to hkdevlab.com: the default (home) website's domain is read from PUBLIC_URL (falling back
+ * to the production default) and resolved to a `websites` row at request time — a second site later is just
+ * another row, addressable by websiteId.
  *
- * The pipeline this router exposes: CRAWLER → ANALYZER → SEO ISSUES (all inside POST /scan) → LLM
- * recommendation (POST /issues/:id/recommend) → HUMAN APPROVAL (approve/reject) → SAFE APPLY (apply) →
- * RE-SCAN (POST /scan again — its response's `comparison` field says what changed). Nothing here ever
- * writes to production content except an explicitly approved recommendation, applied by an explicit call.
+ * The pipeline this router exposes: POST /scan QUEUES a job (async — see server/seo/jobs.js) that runs
+ * CRAWLER → ANALYZER → SEO ISSUES in the background; GET /scans/:id polls it → LLM recommendation
+ * (POST /issues/:id/recommend) → HUMAN APPROVAL (approve/reject) → SAFE APPLY (apply) → RE-SCAN (POST /scan
+ * again — its audit's `comparison` field, visible once GET'd as complete, says what changed). Nothing here
+ * ever writes to production content except an explicitly approved recommendation, applied by an explicit call.
  */
 export function createSeoRouter(store, { limiter }) {
   const router = express.Router();
@@ -27,23 +29,55 @@ export function createSeoRouter(store, { limiter }) {
   const origin = () => siteOrigin(process.env.PUBLIC_URL);
   const homeWebsite = () => store.ensureWebsite(new URL(origin()).host, 'HK DevLab');
 
-  /* ───────────── scans ───────────── */
+  /** PRODUCTION CRAWL SAFETY: the scan target is always resolved from a registered `websites` row — never
+   *  taken as a bare URL from the browser. An admin request may name a websiteId explicitly; if it does,
+   *  that id must already exist (store.getWebsite), or the request is refused. With no websiteId, this
+   *  falls back to the one configured home website (today's only site) — the same resolution POST /scan
+   *  has always used, just now expressed through the same registered-website path a second site would use. */
+  async function resolveWebsite(req) {
+    if (req.body?.websiteId === undefined || req.body?.websiteId === null) return homeWebsite();
+    const id = +req.body.websiteId;
+    if (!Number.isInteger(id) || id <= 0) return null;
+    return store.getWebsite(id);
+  }
+
+  async function auditWithExtras(audit) {
+    if (!audit || audit.status !== 'complete') return audit;
+    const [counts, comparison] = await Promise.all([
+      store.issueCountsBySeverity(audit.id),
+      compareToPreviousAudit(store, audit.website_id, audit.id),
+    ]);
+    return { ...audit, issueCount: counts.total, comparison };
+  }
+
+  /* ───────────── scans (async: POST queues, GET polls) ───────────── */
   router.post('/scan', asyncH(async (req, res) => {
     if (await limiter.take(`seo-scan:${req.user.id}`, 10, 10 * 60_000)) {
       return res.status(429).json({ ok: false, error: 'Too many audits started — please wait a few minutes.' });
     }
-    const website = await homeWebsite();
+
+    const website = await resolveWebsite(req);
+    if (!website) return res.status(404).json({ ok: false, error: 'Unregistered website — the scan target must already be a website known to this server.' });
+
+    // an admin may point a scan at a staging URL, but it must still resolve to THIS website's own registered
+    // domain — otherwise this endpoint would let an admin use the server as a crawler against arbitrary domains
     const requestedBase = typeof req.body?.baseUrl === 'string' ? req.body.baseUrl : undefined;
-    // an admin may point a scan at a staging URL, but it must still resolve to THIS website's own host —
-    // otherwise this endpoint would let an admin use the server as a crawler against arbitrary domains
-    let baseUrl = origin();
+    let baseUrl = website.domain === new URL(origin()).host ? origin() : `https://${website.domain}`;
     if (requestedBase) {
       let reqHost; try { reqHost = new URL(requestedBase).host; } catch { return res.status(400).json({ ok: false, error: 'baseUrl is not a valid URL.' }); }
-      if (reqHost !== new URL(origin()).host) return res.status(400).json({ ok: false, error: `baseUrl must be on ${new URL(origin()).host}.` });
+      if (reqHost !== website.domain) return res.status(400).json({ ok: false, error: `baseUrl must be on ${website.domain}.` });
       baseUrl = requestedBase;
     }
-    const audit = await runScan(store, website, { baseUrl });
-    res.status(201).json({ ok: true, audit });
+
+    // duplicate-scan protection: queueScan() only inserts if no scan is already queued/running for this
+    // website — an atomic check, not a separate read-then-write, so two near-simultaneous requests can't
+    // both slip through (see createAuditIfNoneActive() in server/db.js)
+    const audit = await queueScan(store, website, { baseUrl });
+    if (!audit) {
+      const active = await store.activeAudit(website.id);
+      return res.status(409).json({ ok: false, error: 'A scan is already queued or running for this website.', audit: active });
+    }
+    res.status(202).json({ ok: true, audit });
   }));
 
   router.get('/scans', asyncH(async (req, res) => {
@@ -54,13 +88,15 @@ export function createSeoRouter(store, { limiter }) {
   // must come before /scans/:id, or Express would try to parse "latest" as a numeric audit id
   router.get('/scans/latest', asyncH(async (req, res) => {
     const website = await homeWebsite();
-    res.json({ audit: await store.latestAudit(website.id) });
+    const audit = await ensureProgressing(store, await store.latestAudit(website.id));
+    res.json({ audit: await auditWithExtras(audit) });
   }));
 
   router.get('/scans/:id', asyncH(async (req, res) => {
     const found = await store.getAudit(+req.params.id);
     if (!found) return res.status(404).json({ ok: false, error: 'Audit not found.' });
-    res.json({ audit: found });
+    const audit = await ensureProgressing(store, found);
+    res.json({ audit: await auditWithExtras(audit) });
   }));
 
   /* ───────────── pages ───────────── */

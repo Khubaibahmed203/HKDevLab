@@ -5,27 +5,46 @@
  * server/seo/recommendations.js is provider-specific. generate() must return already-parsed JSON, never
  * raw prose — see anthropicProvider, which forces this via tool-use rather than asking nicely and hoping.
  */
-const ANTHROPIC_MODEL = 'claude-sonnet-5';
+const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5';   // verified against Anthropic's current model list (Claude 5 family)
 const ANTHROPIC_VERSION = '2023-06-01';
+const DEFAULT_TIMEOUT_MS = 20_000;
+
+// Read at call time, not at module load — same rule as the rest of this codebase's env vars (see
+// server/app.js) — so an override always takes effect and a .env loaded by server/index.js is visible.
+const anthropicModel = () => process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
+const timeoutMs = () => { const n = +process.env.SEO_LLM_TIMEOUT_MS; return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_TIMEOUT_MS; };
 
 function anthropicProvider(apiKey) {
+  const model = anthropicModel();
   return {
     name: 'anthropic',
-    model: ANTHROPIC_MODEL,
+    model,
     available: true,
     async generate({ system, prompt, schema, maxTokens = 1024 }) {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': ANTHROPIC_VERSION },
-        body: JSON.stringify({
-          model: ANTHROPIC_MODEL,
-          max_tokens: maxTokens,
-          system,
-          messages: [{ role: 'user', content: prompt }],
-          tools: [{ name: 'submit_recommendation', description: 'Submit the SEO recommendation.', input_schema: schema }],
-          tool_choice: { type: 'tool', name: 'submit_recommendation' },
-        }),
-      });
+      const ms = timeoutMs();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ms);
+      let res;
+      try {
+        res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': ANTHROPIC_VERSION },
+          body: JSON.stringify({
+            model,
+            max_tokens: maxTokens,
+            system,
+            messages: [{ role: 'user', content: prompt }],
+            tools: [{ name: 'submit_recommendation', description: 'Submit the SEO recommendation.', input_schema: schema }],
+            tool_choice: { type: 'tool', name: 'submit_recommendation' },
+          }),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (err.name === 'AbortError') throw new Error(`Anthropic API request timed out after ${ms}ms`);
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok) throw new Error(`Anthropic API error ${res.status}: ${(await res.text()).slice(0, 300)}`);
       const data = await res.json();
       const toolUse = (data.content || []).find((b) => b.type === 'tool_use');

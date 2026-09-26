@@ -74,6 +74,16 @@ async function call(method, path, { json, headers = {}, auth = true } = {}) {
   let data = {}; try { data = await res.json(); } catch { /* not JSON */ }
   return { status: res.status, data };
 }
+// Phase 2.1: POST /scan only queues the job now (server/seo/jobs.js) — poll GET /scans/:id until it settles.
+// The local fixture's own server is what gets crawled, so this is fast (usually done on the first poll).
+async function pollScan(id, { maxAttempts = 100, delayMs = 25 } = {}) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const r = await call('GET', `/api/admin/seo/scans/${id}`);
+    if (r.data.audit && (r.data.audit.status === 'complete' || r.data.audit.status === 'failed')) return r;
+    await new Promise((res2) => setTimeout(res2, delayMs));
+  }
+  throw new Error(`scan ${id} did not finish within ${maxAttempts * delayMs}ms`);
+}
 
 let r = await call('POST', '/api/admin/seo/scan', { auth: false });
 ok('scanning without signing in is refused (401)', r.status === 401, String(r.status));
@@ -84,10 +94,29 @@ ok('test admin created', r.status === 201, JSON.stringify(r.data));
 r = await call('POST', '/api/admin/seo/scan', { headers: { 'X-Requested-With': '' } });
 ok('scanning without the anti-forgery header is refused (403)', r.status === 403, String(r.status));
 
+/* ───────────── production crawl safety: the scan target is always a registered website, never a bare browser URL ───────────── */
+r = await call('POST', '/api/admin/seo/scan', { json: { websiteId: 999999 } });
+ok('an unregistered websiteId is refused (404), never silently crawled', r.status === 404, String(r.status));
+
+r = await call('POST', '/api/admin/seo/scan', { json: { baseUrl: 'https://example.com/' } });
+ok('a baseUrl on a different host than the registered website is refused (400) — arbitrary browser URLs are rejected', r.status === 400, String(r.status));
+
+/* duplicate-scan protection: an audit already queued/running for this website blocks a second POST /scan */
+const homeSite = await store.ensureWebsite('localhost:8832', 'HK DevLab');
+const dupAudit = await store.createAudit(homeSite.id, { baseUrl: base, status: 'queued' });
 r = await call('POST', '/api/admin/seo/scan');
-ok('running a scan returns 201 with a completed audit', r.status === 201 && r.data.ok && r.data.audit.status === 'complete', JSON.stringify(r.data));
-ok('the audit carries a numeric score and issue count', typeof r.data.audit.score === 'number' && typeof r.data.audit.issueCount === 'number');
+ok('a second scan is refused (409) while one is already queued/running', r.status === 409 && r.data.audit.id === dupAudit.id, JSON.stringify(r.data));
+await store.finishAudit(dupAudit.id, { status: 'failed', summary: 'test cleanup — never actually crawled' });   // unblock, and keep it out of "previous complete audit" comparisons below
+
+/* ───────────── the real (async) scan ───────────── */
+r = await call('POST', '/api/admin/seo/scan');
+ok('POST /scan queues promptly (202) instead of crawling inline', r.status === 202 && r.data.ok && r.data.audit.status === 'queued', JSON.stringify(r.data));
 const auditId = r.data.audit.id;
+
+r = await pollScan(auditId);
+ok('polling scans/:id eventually reports a completed audit', r.status === 200 && r.data.audit.status === 'complete', JSON.stringify(r.data));
+ok('the completed audit carries a numeric score and issue count', typeof r.data.audit.score === 'number' && typeof r.data.audit.issueCount === 'number');
+ok('the audit never targeted the real hkdevlab.com — only this test\'s own local server', r.data.audit.base_url.startsWith(base));
 
 r = await call('GET', '/api/admin/seo/scans/latest');
 ok('scans/latest returns the audit just run', r.status === 200 && r.data.audit.id === auditId, JSON.stringify(r.data));

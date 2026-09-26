@@ -312,11 +312,40 @@ export async function createStore({ pool } = {}) {
     async listPages(websiteId) { return (await db.all('SELECT * FROM pages WHERE website_id = ? ORDER BY id', [websiteId])).map(page); },
     async getPage(id) { return page((await db.all('SELECT * FROM pages WHERE id = ?', [id]))[0]); },
 
-    /* SEO audits (one row per SCAN→ANALYZE run) */
-    async createAudit(websiteId, { baseUrl, pagesPlanned } = {}) {
+    /* SEO audits (one row per SCAN→ANALYZE run). `status` defaults to 'running' so every pre-Phase-2.1
+       caller (existing tests, direct store use) keeps working unchanged; the async job queue (server/seo/
+       jobs.js) is the only caller that passes status: 'queued' and lets claimAudit() below move it along. */
+    async createAudit(websiteId, { baseUrl, pagesPlanned, status = 'running' } = {}) {
       const at = now();
-      const id = await db.insert("INSERT INTO seo_audits (website_id,started_at,status,base_url,pages_planned) VALUES (?,?,'running',?,?)", [websiteId, at, baseUrl || null, pagesPlanned ?? null]);
-      return { id, website_id: websiteId, started_at: at, finished_at: null, score: null, status: 'running', summary: null, base_url: baseUrl || null, pages_planned: pagesPlanned ?? null };
+      const id = await db.insert('INSERT INTO seo_audits (website_id,started_at,status,base_url,pages_planned) VALUES (?,?,?,?,?)', [websiteId, at, status, baseUrl || null, pagesPlanned ?? null]);
+      return { id, website_id: websiteId, started_at: at, finished_at: null, score: null, status, summary: null, base_url: baseUrl || null, pages_planned: pagesPlanned ?? null };
+    },
+    /** Atomic compare-and-swap: 'queued' → 'running'. Whichever caller's UPDATE actually changes a row (the
+     *  background job kick, or a poll request's fallback — see ensureProgressing() in jobs.js) is the one
+     *  that goes on to run the crawl; the loser sees 0 rows changed and does nothing. This is what makes it
+     *  safe for both to race without ever crawling the same audit twice. */
+    async claimAudit(id) { return (await db.run("UPDATE seo_audits SET status = 'running' WHERE id = ? AND status = 'queued'", [id])) > 0; },
+    /** Duplicate-scan protection: is there already a queued or running audit for this website? */
+    async activeAudit(websiteId) {
+      return audit((await db.all("SELECT * FROM seo_audits WHERE website_id = ? AND status IN ('queued','running') ORDER BY id DESC LIMIT 1", [websiteId]))[0]);
+    },
+    /** Atomic duplicate-scan protection: inserts a new 'queued' audit ONLY if no queued/running one already
+     *  exists for this website — same INSERT…SELECT…WHERE NOT EXISTS pattern as createFirstUser() above, so
+     *  of two POST /scan requests that both raced past a plain activeAudit() check, exactly one still wins.
+     *  Returns the new audit, or null if one was already active. */
+    async createAuditIfNoneActive(websiteId, { baseUrl, pagesPlanned } = {}) {
+      const at = now();
+      // CAST(...) on the bare (tableless) SELECT's numeric placeholders: without it, Postgres/pg-mem can't
+      // infer a type for a literal `?` here (there's no source column to infer it from, unlike a plain
+      // INSERT ... VALUES) and guesses 'text', which then fails against website_id's BIGINT column. SQLite
+      // accepts the same CAST syntax too (its "INT"-containing type names just select integer affinity), so
+      // one query string still works unmodified on both backends.
+      const id = await db.insert(
+        `INSERT INTO seo_audits (website_id,started_at,status,base_url,pages_planned)
+         SELECT CAST(? AS BIGINT), ?, 'queued', ?, CAST(? AS BIGINT)
+         WHERE NOT EXISTS (SELECT 1 FROM seo_audits WHERE website_id = CAST(? AS BIGINT) AND status IN ('queued','running'))`,
+        [websiteId, at, baseUrl || null, pagesPlanned ?? null, websiteId]);
+      return id ? { id, website_id: websiteId, started_at: at, finished_at: null, score: null, status: 'queued', summary: null, base_url: baseUrl || null, pages_planned: pagesPlanned ?? null } : null;
     },
     async finishAudit(id, { score, status, summary, pagesCrawled, errorsCount, durationMs, pagespeed }) {
       await db.run(
