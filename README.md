@@ -24,7 +24,7 @@ complete it becomes the admin**, and setup then closes permanently. Everyone els
 |---|---|---|
 | **Site content** | Edit every section of the public site — hero text, statement, tech tiles, services, principles, process steps, projects (the browser windows in the 3D ring), audience band, contact details & form options, footer, SEO title/description. Add, remove and reorder items. **Changes go live the moment you save.** | admin, editor |
 | **History** | Every save is kept (latest 40). Restore any earlier version in one click. | admin, editor |
-| **SEO** | Run a rule-based technical-SEO audit of the homepage (title/description length, canonical, Open Graph, Twitter tags, headings, image alt text, broken anchor links, JSON-LD, robots.txt/sitemap) and browse the score and findings by severity. Read-only for now — see [SEO (Phase 1)](#seo-phase-1--technical-foundation) below. | admin, editor |
+| **SEO** | Crawl the site, browse the score and issues found (metadata, headings, images, duplicate content, broken/orphan links, crawlability), optionally draft an AI-suggested fix for an issue, and approve/reject/apply it. See [SEO (the built-in SEO Agent)](#seo-the-built-in-seo-agent) below. | admin, editor |
 | **Enquiries** | Contact-form messages: mark new / read / replied / spam, reply by email, delete, export CSV. | admin, editor |
 | **Users** | Add people, set roles, reset passwords, remove access. | admin only |
 | **Account** | Change your own password. | everyone |
@@ -78,7 +78,7 @@ visitor ─► POST /api/contact ─► validate ─► rate-limit / honeypot / 
 The visitor is answered as soon as the message is stored; email is sent in the background, so a mail outage never loses
 an enquiry (the Enquiries list shows a "notified / email not sent" badge).
 
-## SEO (Phase 1 — technical foundation)
+## SEO (the built-in SEO Agent)
 
 The homepage's `<title>`, canonical, Open Graph, Twitter and JSON-LD tags are all computed from the same
 `content.seo` (and `content.lab.services`/`content.contact.email`) the CMS already edits, by one shared function
@@ -91,18 +91,41 @@ still declares the real production URL as canonical.
 `public/sitemap.xml` lists the one public URL the site has today; `robots.txt` points at it. Both are meant to
 grow — once real service/blog/case-study pages exist, the sitemap becomes generated rather than static.
 
-`server/seo/` is a rule-based (no LLM, no network crawl) technical-SEO analyzer: it renders the homepage
-in-process through the same `injectSeo()`, reads `robots.txt`/`sitemap.xml` off disk, and checks metadata
-completeness, heading structure, image alt text, dead anchor links, JSON-LD validity and crawlability —
-exposed at `/api/admin/seo/scan` (POST), `/api/admin/seo/scans/:id` / `/scans/latest` (GET) and
-`/api/admin/seo/issues` (GET), all behind the same auth/CSRF/rate-limiting as the rest of `/api/admin`. Findings
-are stored (`websites`/`pages`/`seo_audits`/`seo_issues` — scoped by `website_id` from the start, so a second
-site later is an additional row, not a rewrite) and browsable under **Admin → SEO**, but nothing here writes to
-production content automatically; that stays a later phase, behind its own human-approval step.
+**Admin → SEO** runs a real pipeline: CRAWLER → ANALYZER → ISSUES → (optional) AI RECOMMENDATION → HUMAN APPROVAL
+→ SAFE APPLY → RE-SCAN.
 
-Tests: `node server/test-seo.mjs` covers the metadata/JSON-LD builder, the analyzer's rules and the
-`/api/admin/seo/*` endpoints; `node server/test-pg.mjs` (below) also exercises the same SEO tables over the
-PostgreSQL code path.
+- **Crawler** (`server/seo/crawler.js`) — a real, same-domain-only breadth-first crawl over `fetch`, bounded by
+  `SEO_MAX_PAGES`/`SEO_MAX_DEPTH`/`SEO_REQUEST_TIMEOUT_MS`/`SEO_CRAWL_DELAY_MS` (all optional, sensible
+  defaults). Reads and respects `robots.txt` (`server/seo/robots.js`), discovers `sitemap.xml` including one
+  level of sitemap-index nesting (`server/seo/sitemap.js`), and extracts each page with cheerio
+  (`server/seo/extract.js`) — the one new dependency this needed, since regex HTML parsing gets unreliable
+  once pages aren't ones we hand-wrote ourselves.
+- **Analyzer** (`server/seo/pageAnalyzer.js`) — deterministic, no LLM: metadata, canonical, indexability,
+  headings, images, duplicate title/description/content, and the internal-link graph (orphan pages, broken
+  internal links, links to redirects).
+- **AI recommendations** (`server/seo/llm.js` + `recommendations.js`) — server-side only, provider-agnostic
+  (Anthropic today, via `fetch` directly rather than an SDK), structured output only (never freeform prose),
+  crawled page content always framed as untrusted data the model must never treat as instructions. Without
+  `ANTHROPIC_API_KEY` this reports itself unavailable rather than fabricating a suggestion.
+- **Approval + safe apply** (`server/seo/apply.js`) — every recommendation starts `pending`; only an explicitly
+  `approved` one can be applied, and only title/description recommendations can be applied automatically today
+  (through the existing `sanitizeContent()`/`saveContent()` path, so it's validated and versioned like any
+  admin edit). Anything else returns "manual implementation required" rather than an unsafe change.
+
+Routes, all under `/api/admin/seo/*` behind the same auth/CSRF/rate-limiting as the rest of `/api/admin`:
+`POST /scan` (optionally `{ baseUrl }`), `GET /scans`, `GET /scans/latest`, `GET /scans/:id`, `GET /pages`,
+`GET /issues` (filter by `severity`/`status`/`type`/`pageId`), `POST /issues/:id/recommend`,
+`GET /recommendations`, `POST /recommendations/:id/approve|reject|apply`.
+
+Data lives in `websites`/`pages`/`seo_audits`/`seo_issues`/`page_links`/`seo_recommendations` — every table
+scoped by `website_id` from the start, so a second site later is an additional row, not a rewrite.
+
+Tests: `node server/test-seo.mjs` (the metadata/JSON-LD builder and the original rule-based checks) ·
+`node server/test-seo-crawl.mjs` (URL normalization, robots.txt, sitemap parsing, cheerio extraction, the real
+crawler against a local fixture server — same-domain-only, depth/page/timeout limits, redirects, the
+multi-page analyzer) · `node server/test-seo-recommendations.mjs` (the LLM provider mocked at the network
+boundary — never a real paid call — plus the full recommend → approve/reject → apply workflow) ·
+`node server/test-pg.mjs` (below) also exercises every SEO table over the PostgreSQL code path.
 
 ## Settings (`.env` locally, your host's environment variables in production)
 
@@ -116,6 +139,9 @@ PostgreSQL code path.
 | `IP_HASH_SALT` | Random string; visitor IPs are stored only as salted hashes. |
 | `ALLOWED_ORIGINS` | Only if the site is served from a different domain than the API. |
 | `NODE_ENV=production` | Enables HTTPS-only cookies and HSTS. Set it in production. |
+| `SEO_MAX_PAGES` `SEO_MAX_DEPTH` `SEO_REQUEST_TIMEOUT_MS` `SEO_CRAWL_DELAY_MS` | SEO crawler safety limits. All optional, sensible defaults (100 pages, depth 5, 10s timeout, 250ms delay). |
+| `ANTHROPIC_API_KEY` | Enables AI-drafted SEO recommendations. Without it, the SEO dashboard still crawls and reports issues — drafting a suggested fix just reports itself unavailable. |
+| `PAGESPEED_API_KEY` | Optional real PageSpeed Insights performance scoring for the scanned homepage. Without it, performance is reported as unavailable, never a fabricated number. |
 
 **Cloudflare Email Routing** only forwards *incoming* mail and cannot send. Use a sending service such as Resend
 (free tier): verify `hkdevlab.com` there (add its DNS records in Cloudflare, "DNS only"), create an API key, then
@@ -203,7 +229,9 @@ content/  default.json (initial content) · schema.js (the ONE definition of eve
           admin forms and by server-side validation) · seo.js (title/canonical/OG/Twitter/JSON-LD, shared by
           the server and the browser)
 server/   index.js · auth.js · db.js · content.js · mail.js · validate.js · admin/ (the portal UI) ·
-          seo/ (rule-based technical-SEO analyzer — crawl.js, analyzers.js, jobs.js, routes.js)
+          seo/ (the SEO Agent — crawler.js, robots.js, sitemap.js, extract.js, pageAnalyzer.js, jobs.js,
+          routes.js, llm.js, recommendations.js, apply.js, pagespeed.js, limits.js, url.js, http.js;
+          crawl.js/analyzers.js are the original local-only rule-based checker, still used by its own tests)
 public/   brand/ (logos), robots.txt, sitemap.xml
 ```
 Tests: `node server/test-media.mjs` covers photo uploads (auth, type sniffing, size, serving, content validation) ·

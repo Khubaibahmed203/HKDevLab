@@ -61,6 +61,8 @@ const { createApp } = await import(new URL('./app.js', import.meta.url).href);
 const { app, store } = await createApp();
 const server = await new Promise((r) => { const s = app.listen(8832, () => r(s)); });
 const base = 'http://localhost:8832';
+process.env.PUBLIC_URL = base;   // Phase 2: /scan now runs a REAL network crawl — point it at this test's own
+                                  // server, never at the real internet, so this test stays fast, offline and deterministic
 
 let cookie = '';
 async function call(method, path, { json, headers = {}, auth = true } = {}) {
@@ -108,7 +110,7 @@ ok('reading issues without signing in is refused (401)', r.status === 401, Strin
 
 /* the website row is not hardcoded — it comes from the same ensureWebsite() path a second site would use */
 const w = await store.getWebsite(1);
-ok('a website row was created for the default domain, not literally in seo/ source code', w && w.domain === 'hkdevlab.com' && w.name === 'HK DevLab');
+ok('a website row was created for the configured domain (PUBLIC_URL), not literally in seo/ source code', w && w.domain === 'localhost:8832' && w.name === 'HK DevLab');
 
 server.close();
 await store.close();

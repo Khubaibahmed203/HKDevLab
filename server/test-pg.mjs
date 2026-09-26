@@ -121,6 +121,40 @@ const allIssues = await store.listIssues({ websiteId: w1.id });
 ok('listIssues returns both issues, newest first', allIssues.length === 2 && allIssues[0].type === 'title-length');
 const critOnly = await store.listIssues({ websiteId: w1.id, severity: 'critical' });
 ok('listIssues filters by severity', critOnly.length === 1 && critOnly[0].type === 'missing-title');
+ok('listIssues filters by type (partial match)', (await store.listIssues({ websiteId: w1.id, type: 'title-length' })).length === 1);
+ok('issueCountsBySeverity', (await store.issueCountsBySeverity(auditRow.id)).critical === 1 && (await store.issueCountsBySeverity(auditRow.id)).warning === 1 && (await store.issueCountsBySeverity(auditRow.id)).total === 2);
+ok('getIssue', (await store.getIssue(allIssues[0].id)).type === allIssues[0].type);
+
+// Phase 2: the full page-facts upsert (not just the Phase 1 subset), the link graph, recommendations, and audit history
+const pageId3 = await store.upsertPage({
+  websiteId: w1.id, url: 'https://hkdevlab.com/services', finalUrl: 'https://hkdevlab.com/services', statusCode: 200,
+  contentType: 'text/html', title: 'Services', description: 'D', canonical: 'https://hkdevlab.com/services', robots: '',
+  h1Count: 1, h2Count: 3, wordCount: 500, htmlSize: 12000, responseTimeMs: 120, depth: 1, imageCount: 4, imagesMissingAlt: 1,
+  lang: 'en', ogTitle: 'Services', ogDescription: 'D', ogImage: '/og.jpg', twitterCard: 'summary', jsonLdPresent: true, auditId: auditRow.id,
+});
+ok('upsertPage stores the full Phase 2 field set', typeof pageId3 === 'number');
+const fullPage = (await store.getPage(pageId3));
+ok('getPage round-trips the extended fields with correct types', fullPage.h1_count === 1 && fullPage.word_count === 500 && fullPage.json_ld_present === true && fullPage.depth === 1);
+
+await store.createLinks(w1.id, auditRow.id, [
+  { fromPageId: pageId, toUrl: 'https://hkdevlab.com/services', toPageId: pageId3, anchorText: 'Our services', isInternal: true },
+  { fromPageId: pageId, toUrl: 'https://external.example/x', toPageId: null, anchorText: 'External', isInternal: false },
+]);
+ok('createLinks does not throw and accepts a null to_page_id for an external link', true);
+
+const audit2 = await store.createAudit(w1.id, { baseUrl: 'https://hkdevlab.com', pagesPlanned: 100 });
+await store.finishAudit(audit2.id, { score: 95, status: 'complete', summary: 'ok', pagesCrawled: 2, errorsCount: 0, durationMs: 500, pagespeed: { available: true, performanceScore: 88 } });
+ok('finishAudit stores the Phase 2 crawl stats and a JSON pagespeed result', (await store.getAudit(audit2.id)).pages_crawled === 2 && (await store.getAudit(audit2.id)).pagespeed.performanceScore === 88);
+ok('previousCompleteAudit finds the earlier complete audit, excluding the current one', (await store.previousCompleteAudit(w1.id, audit2.id)).id === auditRow.id);
+ok('listAudits returns newest first', (await store.listAudits(w1.id))[0].id === audit2.id);
+
+const rec = await store.createRecommendation({ websiteId: w1.id, issueId: allIssues[0].id, pageId: pageId3, type: 'title', currentValue: 'Old', proposedValue: 'New', reasoning: 'because', aiProvider: 'anthropic', aiModel: 'claude-sonnet-5' });
+ok('createRecommendation starts pending', rec.status === 'pending' && typeof rec.id === 'number');
+ok('listRecommendations finds it', (await store.listRecommendations({ websiteId: w1.id })).some((r) => r.id === rec.id));
+const approved = await store.setRecommendationStatus(rec.id, 'approved', { reviewedBy: 'admin@x.co' });
+ok('setRecommendationStatus records the reviewer and timestamp', approved.status === 'approved' && approved.reviewed_by === 'admin@x.co' && !!approved.reviewed_at);
+const applied = await store.setRecommendationStatus(rec.id, 'applied', { applied: true });
+ok('…and the applied timestamp on a later call', applied.status === 'applied' && !!applied.applied_at);
 
 // cleanup
 ok('deleteUser', (await store.deleteUser(uid)) === true && (await store.userCount()) === 0);

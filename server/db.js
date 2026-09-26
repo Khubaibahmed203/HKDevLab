@@ -94,15 +94,61 @@ export async function createStore({ pool } = {}) {
        detail TEXT, recommendation TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     'CREATE INDEX IF NOT EXISTS idx_seo_issues_audit ON seo_issues (audit_id)',
     'CREATE INDEX IF NOT EXISTS idx_seo_issues_website ON seo_issues (website_id)',
+    // Phase 2: the internal-link graph (edges discovered by one crawl) and AI recommendations (never applied
+    // without a human approval step — see server/seo/apply.js).
+    `CREATE TABLE IF NOT EXISTS page_links (
+       id ${db.pk}, website_id BIGINT NOT NULL, audit_id BIGINT NOT NULL, from_page_id BIGINT NOT NULL,
+       to_url TEXT NOT NULL, to_page_id BIGINT, anchor_text TEXT, is_internal INTEGER NOT NULL DEFAULT 1,
+       created_at TEXT NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS idx_page_links_audit ON page_links (audit_id)',
+    'CREATE INDEX IF NOT EXISTS idx_page_links_to ON page_links (to_page_id)',
+    `CREATE TABLE IF NOT EXISTS seo_recommendations (
+       id ${db.pk}, website_id BIGINT NOT NULL, issue_id BIGINT NOT NULL, page_id BIGINT,
+       type TEXT NOT NULL, current_value TEXT, proposed_value TEXT, reasoning TEXT,
+       ai_provider TEXT, ai_model TEXT, status TEXT NOT NULL DEFAULT 'pending',
+       created_at TEXT NOT NULL, reviewed_at TEXT, reviewed_by TEXT, applied_at TEXT)`,
+    'CREATE INDEX IF NOT EXISTS idx_seo_recommendations_website ON seo_recommendations (website_id)',
+    'CREATE INDEX IF NOT EXISTS idx_seo_recommendations_issue ON seo_recommendations (issue_id)',
   ].join(';\n'));
   // databases created before Google sign-in existed lack this column
   try { await db.exec(`ALTER TABLE users ADD COLUMN ${db.kind === 'postgres' ? 'IF NOT EXISTS ' : ''}google_sub TEXT`); } catch { /* already there */ }
 
+  // Phase 2: `pages` and `seo_audits` grew new columns for the real crawler's facts. SQLite has no
+  // "ADD COLUMN IF NOT EXISTS", so every call is wrapped and a repeat run's "duplicate column" error is
+  // swallowed — the same pattern already used for users.google_sub above.
+  const addColumn = async (table, column, type) => {
+    try { await db.exec(`ALTER TABLE ${table} ADD COLUMN ${db.kind === 'postgres' ? 'IF NOT EXISTS ' : ''}${column} ${type}`); } catch { /* already there */ }
+  };
+  for (const [column, type] of [
+    ['final_url', 'TEXT'], ['content_type', 'TEXT'], ['canonical', 'TEXT'], ['robots', 'TEXT'],
+    ['h1_count', 'INTEGER'], ['h2_count', 'INTEGER'], ['word_count', 'INTEGER'], ['html_size', 'INTEGER'],
+    ['response_time_ms', 'INTEGER'], ['depth', 'INTEGER'], ['image_count', 'INTEGER'], ['images_missing_alt', 'INTEGER'],
+    ['lang', 'TEXT'], ['og_title', 'TEXT'], ['og_description', 'TEXT'], ['og_image', 'TEXT'], ['twitter_card', 'TEXT'],
+    ['json_ld_present', 'INTEGER'], ['last_audit_id', 'BIGINT'],
+  ]) await addColumn('pages', column, type);
+  for (const [column, type] of [
+    ['base_url', 'TEXT'], ['pages_crawled', 'INTEGER'], ['pages_planned', 'INTEGER'], ['errors_count', 'INTEGER'],
+    ['duration_ms', 'INTEGER'], ['pagespeed', 'TEXT'],
+  ]) await addColumn('seo_audits', column, type);
+
   const enq = (r) => ({ ...r, id: Number(r.id), email_sent: !!Number(r.email_sent) });
   const website = (r) => r && { ...r, id: Number(r.id) };
-  const page = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id) };
-  const audit = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), score: r.score == null ? null : Number(r.score) };
+  const int = (v) => (v == null ? null : Number(v));
+  const page = (r) => r && {
+    ...r, id: Number(r.id), website_id: Number(r.website_id),
+    status_code: int(r.status_code), h1_count: int(r.h1_count), h2_count: int(r.h2_count), word_count: int(r.word_count),
+    html_size: int(r.html_size), response_time_ms: int(r.response_time_ms), depth: int(r.depth),
+    image_count: int(r.image_count), images_missing_alt: int(r.images_missing_alt), last_audit_id: int(r.last_audit_id),
+    json_ld_present: r.json_ld_present == null ? null : !!Number(r.json_ld_present),
+  };
+  const audit = (r) => r && {
+    ...r, id: Number(r.id), website_id: Number(r.website_id), score: int(r.score),
+    pages_crawled: int(r.pages_crawled), pages_planned: int(r.pages_planned), errors_count: int(r.errors_count), duration_ms: int(r.duration_ms),
+    pagespeed: r.pagespeed ? JSON.parse(r.pagespeed) : null,
+  };
   const seoIssue = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), audit_id: Number(r.audit_id), page_id: r.page_id == null ? null : Number(r.page_id) };
+  const pageLink = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), audit_id: Number(r.audit_id), from_page_id: Number(r.from_page_id), to_page_id: r.to_page_id == null ? null : Number(r.to_page_id), is_internal: !!Number(r.is_internal) };
+  const recommendation = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), issue_id: Number(r.issue_id), page_id: r.page_id == null ? null : Number(r.page_id) };
   const user = (r) => r && {
     id: Number(r.id), email: r.email, name: r.name, role: r.role, created_at: r.created_at, last_login_at: r.last_login_at,
     hasPassword: String(r.password_hash || '').startsWith('scrypt:'), googleLinked: !!r.google_sub,
@@ -236,31 +282,53 @@ export async function createStore({ pool } = {}) {
     },
     async getWebsite(id) { return website((await db.all('SELECT * FROM websites WHERE id = ?', [id]))[0]); },
 
-    /* pages (one crawlable URL per website — Phase 1 only ever writes the homepage) */
-    async upsertPage({ websiteId, url, title, description, statusCode }) {
+    /* pages: current known facts for one crawlable URL, upserted by (website, url) — a page's row always
+       reflects its MOST RECENT crawl; per-audit history lives in seo_issues/page_links via audit_id. */
+    async upsertPage({ websiteId, url, finalUrl, statusCode, contentType, title, description, canonical, robots,
+      h1Count, h2Count, wordCount, htmlSize, responseTimeMs, depth, imageCount, imagesMissingAlt, lang,
+      ogTitle, ogDescription, ogImage, twitterCard, jsonLdPresent, auditId }) {
       const at = now();
+      const vals = [finalUrl || null, statusCode ?? null, contentType || null, title || null, description || null, canonical || null, robots || null,
+        h1Count ?? null, h2Count ?? null, wordCount ?? null, htmlSize ?? null, responseTimeMs ?? null, depth ?? null,
+        imageCount ?? null, imagesMissingAlt ?? null, lang || null, ogTitle || null, ogDescription || null, ogImage || null,
+        twitterCard || null, jsonLdPresent == null ? null : (jsonLdPresent ? 1 : 0), auditId ?? null];
       const existing = (await db.all('SELECT id FROM pages WHERE website_id = ? AND url = ?', [websiteId, url]))[0];
       if (existing) {
-        await db.run('UPDATE pages SET title = ?, description = ?, status_code = ?, last_crawled_at = ?, updated_at = ? WHERE id = ?',
-          [title || null, description || null, statusCode ?? null, at, at, existing.id]);
+        await db.run(
+          `UPDATE pages SET final_url=?, status_code=?, content_type=?, title=?, description=?, canonical=?, robots=?,
+             h1_count=?, h2_count=?, word_count=?, html_size=?, response_time_ms=?, depth=?, image_count=?, images_missing_alt=?,
+             lang=?, og_title=?, og_description=?, og_image=?, twitter_card=?, json_ld_present=?, last_audit_id=?,
+             last_crawled_at=?, updated_at=? WHERE id=?`,
+          [...vals, at, at, existing.id]);
         return Number(existing.id);
       }
-      return db.insert('INSERT INTO pages (website_id,url,title,description,status_code,last_crawled_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)',
-        [websiteId, url, title || null, description || null, statusCode ?? null, at, at, at]);
+      return db.insert(
+        `INSERT INTO pages (website_id,url,final_url,status_code,content_type,title,description,canonical,robots,
+           h1_count,h2_count,word_count,html_size,response_time_ms,depth,image_count,images_missing_alt,lang,
+           og_title,og_description,og_image,twitter_card,json_ld_present,last_audit_id,last_crawled_at,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [websiteId, url, ...vals, at, at, at]);
     },
     async listPages(websiteId) { return (await db.all('SELECT * FROM pages WHERE website_id = ? ORDER BY id', [websiteId])).map(page); },
+    async getPage(id) { return page((await db.all('SELECT * FROM pages WHERE id = ?', [id]))[0]); },
 
     /* SEO audits (one row per SCAN→ANALYZE run) */
-    async createAudit(websiteId) {
+    async createAudit(websiteId, { baseUrl, pagesPlanned } = {}) {
       const at = now();
-      const id = await db.insert("INSERT INTO seo_audits (website_id,started_at,status) VALUES (?,?,'running')", [websiteId, at]);
-      return { id, website_id: websiteId, started_at: at, finished_at: null, score: null, status: 'running', summary: null };
+      const id = await db.insert("INSERT INTO seo_audits (website_id,started_at,status,base_url,pages_planned) VALUES (?,?,'running',?,?)", [websiteId, at, baseUrl || null, pagesPlanned ?? null]);
+      return { id, website_id: websiteId, started_at: at, finished_at: null, score: null, status: 'running', summary: null, base_url: baseUrl || null, pages_planned: pagesPlanned ?? null };
     },
-    async finishAudit(id, { score, status, summary }) {
-      await db.run('UPDATE seo_audits SET finished_at = ?, score = ?, status = ?, summary = ? WHERE id = ?', [now(), score ?? null, status, summary || null, id]);
+    async finishAudit(id, { score, status, summary, pagesCrawled, errorsCount, durationMs, pagespeed }) {
+      await db.run(
+        'UPDATE seo_audits SET finished_at=?, score=?, status=?, summary=?, pages_crawled=?, errors_count=?, duration_ms=?, pagespeed=? WHERE id=?',
+        [now(), score ?? null, status, summary || null, pagesCrawled ?? null, errorsCount ?? null, durationMs ?? null, pagespeed ? JSON.stringify(pagespeed) : null, id]);
     },
     async getAudit(id) { return audit((await db.all('SELECT * FROM seo_audits WHERE id = ?', [id]))[0]); },
     async latestAudit(websiteId) { return audit((await db.all('SELECT * FROM seo_audits WHERE website_id = ? ORDER BY id DESC LIMIT 1', [websiteId]))[0]); },
+    async previousCompleteAudit(websiteId, excludeAuditId) {
+      return audit((await db.all("SELECT * FROM seo_audits WHERE website_id = ? AND status = 'complete' AND id <> ? ORDER BY id DESC LIMIT 1", [websiteId, excludeAuditId]))[0]);
+    },
+    async listAudits(websiteId, limit = 20) { return (await db.all('SELECT * FROM seo_audits WHERE website_id = ? ORDER BY id DESC LIMIT ?', [websiteId, limit])).map(audit); },
 
     /* SEO issues (findings from one audit) */
     async createIssues(websiteId, auditId, issues) {
@@ -271,15 +339,59 @@ export async function createStore({ pool } = {}) {
           [websiteId, auditId, it.pageId ?? null, it.type, it.severity, 'open', it.detail ?? null, it.recommendation ?? null, at, at]);
       }
     },
-    async listIssues({ websiteId, auditId, severity, status, limit = 200, offset = 0 } = {}) {
+    async listIssues({ websiteId, auditId, severity, status, type, pageId, limit = 200, offset = 0 } = {}) {
       const clauses = [], params = [];
       if (websiteId) { clauses.push('website_id = ?'); params.push(websiteId); }
       if (auditId) { clauses.push('audit_id = ?'); params.push(auditId); }
       if (severity) { clauses.push('severity = ?'); params.push(severity); }
       if (status) { clauses.push('status = ?'); params.push(status); }
+      if (type) { clauses.push('type LIKE ?'); params.push(`%${type}%`); }
+      if (pageId) { clauses.push('page_id = ?'); params.push(pageId); }
       const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
       const rows = await db.all(`SELECT * FROM seo_issues ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, [...params, limit, offset]);
       return rows.map(seoIssue);
+    },
+    async issueCountsBySeverity(auditId) {
+      const out = { total: 0, critical: 0, warning: 0, info: 0 };
+      for (const r of await db.all('SELECT severity, COUNT(*) AS n FROM seo_issues WHERE audit_id = ? GROUP BY severity', [auditId])) { out[r.severity] = Number(r.n); out.total += Number(r.n); }
+      return out;
+    },
+    async getIssue(id) { return seoIssue((await db.all('SELECT * FROM seo_issues WHERE id = ?', [id]))[0]); },
+
+    /* internal-link graph edges discovered by one crawl */
+    async createLinks(websiteId, auditId, links) {
+      const at = now();
+      for (const l of links) {
+        await db.run(
+          'INSERT INTO page_links (website_id,audit_id,from_page_id,to_url,to_page_id,anchor_text,is_internal,created_at) VALUES (?,?,?,?,?,?,?,?)',
+          [websiteId, auditId, l.fromPageId, l.toUrl, l.toPageId ?? null, (l.anchorText || '').slice(0, 200), l.isInternal ? 1 : 0, at]);
+      }
+    },
+
+    /* AI recommendations — always start 'pending'; never applied without an explicit approve + apply call */
+    async createRecommendation({ websiteId, issueId, pageId, type, currentValue, proposedValue, reasoning, aiProvider, aiModel }) {
+      const at = now();
+      const id = await db.insert(
+        'INSERT INTO seo_recommendations (website_id,issue_id,page_id,type,current_value,proposed_value,reasoning,ai_provider,ai_model,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,\'pending\',?)',
+        [websiteId, issueId, pageId ?? null, type, currentValue ?? null, proposedValue ?? null, reasoning ?? null, aiProvider ?? null, aiModel ?? null, at]);
+      return this.getRecommendation(id);
+    },
+    async getRecommendation(id) { return recommendation((await db.all('SELECT * FROM seo_recommendations WHERE id = ?', [id]))[0]); },
+    async listRecommendations({ websiteId, issueId, status, limit = 200, offset = 0 } = {}) {
+      const clauses = [], params = [];
+      if (websiteId) { clauses.push('website_id = ?'); params.push(websiteId); }
+      if (issueId) { clauses.push('issue_id = ?'); params.push(issueId); }
+      if (status) { clauses.push('status = ?'); params.push(status); }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+      const rows = await db.all(`SELECT * FROM seo_recommendations ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, [...params, limit, offset]);
+      return rows.map(recommendation);
+    },
+    async setRecommendationStatus(id, status, { reviewedBy, applied } = {}) {
+      const at = now();
+      await db.run(
+        `UPDATE seo_recommendations SET status = ?${reviewedBy !== undefined ? ', reviewed_at = ?, reviewed_by = ?' : ''}${applied ? ', applied_at = ?' : ''} WHERE id = ?`,
+        [status, ...(reviewedBy !== undefined ? [at, reviewedBy] : []), ...(applied ? [at] : []), id]);
+      return this.getRecommendation(id);
     },
   };
 }

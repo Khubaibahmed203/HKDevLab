@@ -481,68 +481,156 @@ function enquiryCard(item, reload) {
 }
 
 /* ───────────── SEO ─────────────
-   Phase 1: a read-only audit dashboard over the rule-based analyzer. No AI recommendations, no way to change
-   production content from here yet — that stays a later phase, behind its own approval step. */
-let seoSeverity = '', seoStatus = '';
+   A real crawler (server/seo/crawler.js) feeds a deterministic analyzer, whose findings can each get an
+   optional AI-drafted recommendation — reviewed and approved/rejected by a person here, and only ever
+   applied to production content after that explicit approval. Nothing here writes to the site on its own. */
+let seoView = 'overview', seoSeverity = '', seoStatus = '', seoTypeFilter = '';
 const SEO_SEVERITIES = ['critical', 'warning', 'info'];
-const SEO_STATUSES = ['open', 'acknowledged', 'dismissed', 'resolved'];
+const SEO_ISSUE_STATUSES = ['open', 'acknowledged', 'dismissed', 'resolved'];
+const seoFmt = (n) => (n == null ? '—' : String(n));
 
 async function renderSeo(main) {
-  const summary = h('div', { class: 'panel' });
-  const sevTabs = h('div', { class: 'tabs', role: 'group', 'aria-label': 'Filter by severity' });
-  const statusSel = h('select', { 'aria-label': 'Filter by status' },
-    h('option', { value: '', text: 'All statuses' }), SEO_STATUSES.map((s) => h('option', { value: s, text: s })));
-  const list = h('div', {});
-  const runBtn = h('button', { class: 'btn btn--primary', type: 'button', text: 'Run SEO audit' });
+  const tabs = h('div', { class: 'tabs', role: 'group', 'aria-label': 'SEO sections' });
+  const body = h('div', {});
+  main.append(h('h1', { class: 'page-title' }, 'SEO', h('small', { text: 'Crawl, analyze and (optionally) draft AI fixes for the public site — nothing changes live until you approve it.' })), tabs, body);
 
-  main.append(
-    h('h1', { class: 'page-title' }, 'SEO', h('small', { text: 'Technical SEO health of the public homepage, checked against deterministic rules — not an AI layer yet.' })),
-    summary, h('div', { class: 'row' }, runBtn), sevTabs, h('div', { class: 'row' }, statusSel), list);
-
-  function drawSummary(audit) {
-    clear(summary);
-    if (!audit) { summary.append(h('p', { class: 'empty', text: 'No audit has been run yet.' })); return; }
-    const scoreText = audit.status === 'running' ? 'Running…' : audit.status === 'failed' ? 'Failed' : `Score: ${audit.score}/100`;
-    summary.append(h('p', {}, h('b', { text: scoreText }), ' ',
-      h('span', { class: 'meta', text: `${audit.status} · started ${fmtDate(audit.started_at)}${audit.finished_at ? ` · finished ${fmtDate(audit.finished_at)}` : ''}${audit.summary ? ` · ${audit.summary}` : ''}` })));
+  const SECTIONS = [['overview', 'Overview'], ['issues', 'Issues'], ['recommendations', 'Recommendations'], ['history', 'History']];
+  function drawTabs() {
+    tabs.replaceChildren(...SECTIONS.map(([key, label]) => h('button', { class: 'tab', type: 'button', 'aria-pressed': String(seoView === key), onclick: () => { seoView = key; drawTabs(); renderBody(); } }, label)));
   }
+  function renderBody() {
+    clear(body);
+    ({ overview: seoOverview, issues: seoIssuesView, recommendations: seoRecommendationsView, history: seoHistoryView })[seoView](body);
+  }
+  drawTabs();
+  renderBody();
+}
+
+/* ── Overview: latest scan, score, crawl stats, issue counts by severity ── */
+async function seoOverview(main) {
+  main.append(h('p', { class: 'boot', text: 'Loading…' }));
+  const [latestR, issuesR] = await Promise.all([api('GET', '/api/admin/seo/scans/latest'), api('GET', '/api/admin/seo/issues?limit=1')]);
+  clear(main);
+  const audit = latestR.ok ? latestR.data.audit : null;
+  const counts = issuesR.ok ? issuesR.data.counts : { total: 0, critical: 0, warning: 0, info: 0 };
+
+  const runBtn = h('button', { class: 'btn btn--primary', type: 'button', text: 'Run SEO audit' });
+  runBtn.onclick = async () => {
+    runBtn.disabled = true; runBtn.textContent = 'Crawling…';
+    const r = await api('POST', '/api/admin/seo/scan');
+    runBtn.disabled = false; runBtn.textContent = 'Run SEO audit';
+    if (!r.ok) return toast(r.data.error || 'Could not run the audit.', true);
+    const cmp = r.data.audit.comparison;
+    toast(`Audit complete — score ${r.data.audit.score}/100, ${r.data.audit.issueCount} issue(s) across ${r.data.audit.pages_crawled} page(s)${cmp ? ` · ${cmp.resolvedCount} resolved, ${cmp.introducedCount} new since the last scan` : ''}.`);
+    seoOverview(main);
+  };
+
+  const scoreText = !audit ? 'No audit has been run yet.' : audit.status === 'running' ? 'Running…' : audit.status === 'failed' ? `Failed — ${audit.summary || ''}` : `Score: ${audit.score}/100`;
+  main.append(
+    h('div', { class: 'panel' },
+      h('h2', { text: scoreText }),
+      audit && h('p', { class: 'meta' },
+        `${audit.status} · ${audit.base_url || ''} · started ${fmtDate(audit.started_at)}`,
+        audit.finished_at ? ` · finished ${fmtDate(audit.finished_at)}` : '',
+        audit.duration_ms != null ? ` · ${(audit.duration_ms / 1000).toFixed(1)}s` : ''),
+      h('div', { class: 'row' }, runBtn)));
+
+  // a second `main.append()` call, not a second argument to the one above — a bare `audit && h(...)` handed
+  // straight to the native DOM append() stringifies a falsy non-null/undefined-safe value as literal text
+  // ("undefined") instead of being skipped, unlike a kid passed through this file's own h() helper
+  if (audit) {
+    main.append(h('div', { class: 'two' },
+      h('div', { class: 'panel' }, h('h2', { text: 'Crawl' }),
+        h('p', {}, h('b', { text: 'Pages crawled: ' }), seoFmt(audit.pages_crawled), audit.pages_planned ? ` (limit ${audit.pages_planned})` : ''),
+        h('p', {}, h('b', { text: 'Errors: ' }), seoFmt(audit.errors_count)),
+        h('p', {}, h('b', { text: 'Performance: ' }), audit.pagespeed?.available ? `${audit.pagespeed.performanceScore}/100 (PageSpeed, mobile)` : `unavailable${audit.pagespeed?.reason ? ` (${audit.pagespeed.reason})` : ''}`)),
+      h('div', { class: 'panel' }, h('h2', { text: 'Issues' }),
+        h('p', {}, h('span', { class: 'pill critical', text: `${counts.critical} critical` }), ' ', h('span', { class: 'pill warning', text: `${counts.warning} warning` }), ' ', h('span', { class: 'pill info', text: `${counts.info} info` })),
+        h('p', { class: 'meta', text: `${counts.total} total` }))));
+  }
+}
+
+/* ── Issues: filterable list, each with an optional "get AI recommendation" action ── */
+async function seoIssuesView(main) {
+  const sevTabs = h('div', { class: 'tabs', role: 'group', 'aria-label': 'Filter by severity' });
+  const statusSel = h('select', { 'aria-label': 'Filter by status' }, h('option', { value: '', text: 'All statuses' }), SEO_ISSUE_STATUSES.map((s) => h('option', { value: s, text: s })));
+  const typeInput = h('input', { type: 'text', placeholder: 'Filter by issue type…', 'aria-label': 'Filter by issue type', value: seoTypeFilter });
+  const list = h('div', {});
+  main.append(sevTabs, h('div', { class: 'row' }, statusSel, typeInput), list);
 
   function drawSevTabs() {
     sevTabs.replaceChildren(...[['', 'All'], ...SEO_SEVERITIES.map((s) => [s, s[0].toUpperCase() + s.slice(1)])].map(([key, label]) =>
-      h('button', { class: 'tab', type: 'button', 'aria-pressed': String(seoSeverity === key), onclick: () => { seoSeverity = key; loadIssues(); } }, label)));
+      h('button', { class: 'tab', type: 'button', 'aria-pressed': String(seoSeverity === key), onclick: () => { seoSeverity = key; load(); } }, label)));
   }
-
-  async function loadIssues() {
+  async function load() {
     drawSevTabs();
     const qs = new URLSearchParams();
     if (seoSeverity) qs.set('severity', seoSeverity);
     if (seoStatus) qs.set('status', seoStatus);
-    const r = await api('GET', `/api/admin/seo/issues${qs.toString() ? `?${qs}` : ''}`);
+    if (seoTypeFilter) qs.set('type', seoTypeFilter);
+    const r = await api('GET', `/api/admin/seo/issues?${qs}`);
     if (!r.ok) return list.replaceChildren(h('p', { class: 'empty', text: 'Could not load issues.' }));
     list.replaceChildren(...(r.data.issues.length ? r.data.issues.map(seoIssueCard) : [h('p', { class: 'empty', text: 'No issues match this filter.' })]));
   }
-  statusSel.onchange = () => { seoStatus = statusSel.value; loadIssues(); };
-
-  runBtn.onclick = async () => {
-    runBtn.disabled = true; runBtn.textContent = 'Scanning…';
-    const r = await api('POST', '/api/admin/seo/scan');
-    runBtn.disabled = false; runBtn.textContent = 'Run SEO audit';
-    if (!r.ok) return toast(r.data.error || 'Could not run the audit.', true);
-    drawSummary(r.data.audit);
-    toast(`Audit complete — score ${r.data.audit.score}/100, ${r.data.audit.issueCount} issue(s) found.`);
-    loadIssues();
-  };
-
-  const latest = await api('GET', '/api/admin/seo/scans/latest');
-  drawSummary(latest.ok ? latest.data.audit : null);
-  loadIssues();
+  statusSel.onchange = () => { seoStatus = statusSel.value; load(); };
+  let typeTimer;
+  typeInput.oninput = () => { seoTypeFilter = typeInput.value.trim(); clearTimeout(typeTimer); typeTimer = setTimeout(load, 300); };
+  load();
 }
 
 function seoIssueCard(item) {
+  const recBtn = h('button', { class: 'btn btn--sm', type: 'button', text: 'Get AI recommendation' });
+  recBtn.onclick = async () => {
+    recBtn.disabled = true; recBtn.textContent = 'Thinking…';
+    const r = await api('POST', `/api/admin/seo/issues/${item.id}/recommend`);
+    recBtn.disabled = false; recBtn.textContent = 'Get AI recommendation';
+    if (!r.ok) return toast(r.status === 503 ? 'AI recommendations are not configured (set ANTHROPIC_API_KEY).' : (r.data.error || 'Could not generate a recommendation.'), true);
+    toast('Recommendation drafted — see the Recommendations tab to review it.');
+    recBtn.replaceWith(h('span', { class: 'meta', text: 'Recommendation drafted ✓' }));
+  };
   return h('article', { class: 'card' },
     h('div', { class: 'head' }, h('b', { text: item.type }), h('span', { class: `pill ${item.severity}`, text: item.severity }), h('span', { class: 'meta', text: item.status })),
     h('p', { class: 'msg', text: item.detail }),
-    item.recommendation ? h('p', { class: 'meta', text: item.recommendation }) : null);
+    item.recommendation ? h('p', { class: 'meta', text: item.recommendation }) : null,
+    h('div', { class: 'row' }, recBtn));
+}
+
+/* ── Recommendations: AI-drafted fixes, each behind an approve/reject/apply gate ── */
+async function seoRecommendationsView(main) {
+  main.append(h('p', { class: 'boot', text: 'Loading…' }));
+  const r = await api('GET', '/api/admin/seo/recommendations');
+  clear(main);
+  if (!r.ok) return main.append(h('p', { class: 'empty', text: 'Could not load recommendations.' }));
+  main.append(...(r.data.recommendations.length ? r.data.recommendations.map((rec) => seoRecommendationCard(rec, () => seoRecommendationsView(main))) : [h('p', { class: 'empty', text: 'No recommendations yet — request one from an issue on the Issues tab.' })]));
+}
+function seoRecommendationCard(rec, reload) {
+  const approveBtn = h('button', { class: 'btn btn--sm btn--primary', type: 'button', text: 'Approve' });
+  const rejectBtn = h('button', { class: 'btn btn--sm', type: 'button', text: 'Reject' });
+  const applyBtn = h('button', { class: 'btn btn--sm btn--primary', type: 'button', text: 'Apply' });
+  approveBtn.onclick = async () => { const x = await api('POST', `/api/admin/seo/recommendations/${rec.id}/approve`); if (!x.ok) return toast(x.data.error, true); toast('Approved.'); reload(); };
+  rejectBtn.onclick = async () => { if (!confirm('Reject this recommendation?')) return; const x = await api('POST', `/api/admin/seo/recommendations/${rec.id}/reject`); if (!x.ok) return toast(x.data.error, true); toast('Rejected.'); reload(); };
+  applyBtn.onclick = async () => {
+    if (!confirm(`Apply this ${rec.type} change to the live site now? This is saved with full version history and can be rolled back from Site content → History.`)) return;
+    const x = await api('POST', `/api/admin/seo/recommendations/${rec.id}/apply`);
+    if (!x.ok) return toast(x.status === 501 ? 'This recommendation type needs to be implemented manually — it cannot be applied automatically.' : (x.data.error || 'Could not apply.'), true);
+    toast('Applied — live on the site now.'); reload();
+  };
+  return h('article', { class: 'card' },
+    h('div', { class: 'head' }, h('b', { text: rec.type }), h('span', { class: `pill ${rec.status === 'applied' ? 'ok' : rec.status === 'rejected' || rec.status === 'failed' ? 'bad' : 'info'}`, text: rec.status }), h('span', { class: 'meta', text: `${rec.ai_provider || ''} ${rec.ai_model || ''}` })),
+    rec.current_value ? h('p', { class: 'meta' }, h('b', { text: 'Current: ' }), rec.current_value) : null,
+    h('p', { class: 'msg', text: rec.proposed_value }),
+    h('p', { class: 'meta', text: rec.reasoning }),
+    h('div', { class: 'row' }, rec.status === 'pending' ? [approveBtn, rejectBtn] : null, rec.status === 'approved' ? applyBtn : null));
+}
+
+/* ── History: past scans ── */
+async function seoHistoryView(main) {
+  main.append(h('p', { class: 'boot', text: 'Loading…' }));
+  const r = await api('GET', '/api/admin/seo/scans');
+  clear(main);
+  if (!r.ok) return main.append(h('p', { class: 'empty', text: 'Could not load scan history.' }));
+  main.append(!r.data.audits.length ? h('p', { class: 'empty', text: 'No scans yet.' }) : h('ul', { class: 'ulist' }, r.data.audits.map((a) =>
+    h('li', {}, h('div', { class: 'who' }, h('b', { text: a.status === 'complete' ? `Score ${a.score}/100` : a.status }), h('span', { text: `${fmtDate(a.started_at)} · ${a.summary || `${seoFmt(a.pages_crawled)} page(s)`}` }))))));
 }
 
 /* ───────────── users (admins) ───────────── */
