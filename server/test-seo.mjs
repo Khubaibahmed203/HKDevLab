@@ -137,6 +137,44 @@ ok('severity filter only returns critical issues', r.data.issues.every((i) => i.
 r = await call('GET', '/api/admin/seo/issues', { auth: false });
 ok('reading issues without signing in is refused (401)', r.status === 401, String(r.status));
 
+/* ───────────── Phase 3 Step 2: recommendation-level verification, wired into a REAL executeScan() run
+   (not called directly) — proving the actual pipeline, not just the isolated function. ───────────── */
+r = await call('GET', `/api/admin/seo/issues?auditId=${auditId}`);
+const realIssue = r.data.issues[0];
+const realRec = await store.createRecommendation({ websiteId: homeSite.id, issueId: realIssue.id, pageId: realIssue.page_id, type: 'title', currentValue: 'x', proposedValue: 'y', reasoning: 'z', aiProvider: 'anthropic', aiModel: 'claude-sonnet-5' });
+await store.setRecommendationStatus(realRec.id, 'approved', { reviewedBy: 'seo-test@example.com' });
+await store.setRecommendationStatus(realRec.id, 'applied', { applied: true });
+await new Promise((res2) => setTimeout(res2, 5));   // guarantee the next real scan's started_at strictly postdates applied_at
+
+r = await call('POST', '/api/admin/seo/scan');
+ok('a second real scan queues fine once the first is done', r.status === 202, JSON.stringify(r.data));
+const auditId2 = r.data.audit.id;
+r = await pollScan(auditId2);
+ok('the second real scan completes normally', r.status === 200 && r.data.audit.status === 'complete', JSON.stringify(r.data));
+
+r = await call('GET', '/api/admin/seo/recommendations');
+const verifiedReal = r.data.recommendations.find((x) => x.id === realRec.id);
+ok('an unchanged real page still has its issue on the next real scan — verified "still-present" through the actual scan pipeline', verifiedReal?.verified_status === 'still-present' && verifiedReal?.verified_audit_id === auditId2, JSON.stringify(verifiedReal));
+
+/* verification errors must never fail the scan that triggered them */
+r = await call('GET', `/api/admin/seo/issues?auditId=${auditId2}`);
+const anotherIssue = r.data.issues[0];
+const errorRec = await store.createRecommendation({ websiteId: homeSite.id, issueId: anotherIssue.id, pageId: anotherIssue.page_id, type: 'title', currentValue: 'x', proposedValue: 'y', reasoning: 'z', aiProvider: 'anthropic', aiModel: 'claude-sonnet-5' });
+await store.setRecommendationStatus(errorRec.id, 'approved', { reviewedBy: 'seo-test@example.com' });
+await store.setRecommendationStatus(errorRec.id, 'applied', { applied: true });
+await new Promise((res2) => setTimeout(res2, 5));
+
+const realGetIssue = store.getIssue;
+store.getIssue = async () => { throw new Error('simulated verification failure'); };
+r = await call('POST', '/api/admin/seo/scan');
+const auditId3 = r.data.audit.id;
+r = await pollScan(auditId3);
+store.getIssue = realGetIssue;
+ok('a verification error during the scan\'s own post-completion step never marks the audit itself failed', r.status === 200 && r.data.audit.status === 'complete', JSON.stringify(r.data));
+
+const errorRecResult = await store.getRecommendation(errorRec.id);
+ok('…and the affected recommendation safely ends up "unknown" rather than corrupted', errorRecResult.verified_status === 'unknown');
+
 /* the website row is not hardcoded — it comes from the same ensureWebsite() path a second site would use */
 const w = await store.getWebsite(1);
 ok('a website row was created for the configured domain (PUBLIC_URL), not literally in seo/ source code', w && w.domain === 'localhost:8832' && w.name === 'HK DevLab');

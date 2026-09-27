@@ -161,6 +161,55 @@ ok('the applied title is now live on the public content endpoint (through the re
 const versions = await store.listVersions();
 ok('applying created a real version-history entry (rollback stays possible)', versions[0].note.includes(`AI SEO recommendation #${recId}`));
 
+/* ───────────── Phase 3 Step 2: recommendation-level verification (SQLite path) ───────────── */
+r = await call('GET', '/api/admin/seo/recommendations');
+const freshApplied = r.data.recommendations.find((x) => x.id === recId);
+ok('a just-applied recommendation is exposed via the existing API as not-yet-verified', freshApplied.status === 'applied' && freshApplied.verified_status == null);
+
+const { verifyAppliedRecommendations } = await import(new URL('./seo/jobs.js', import.meta.url).href);
+const contentBeforeVerify = JSON.stringify(await store.getContent());
+const auditCountBeforeVerify = (await store.listAudits(website.id, 100)).length;
+await new Promise((res2) => setTimeout(res2, 5));   // guarantee the next audit's started_at strictly postdates recId's applied_at
+
+// resolved: recId's own issue (title-length on the same page) is gone by the next complete audit
+const auditResolved = await store.createAudit(website.id, { baseUrl: 'https://hkdevlab.com' });
+await store.createIssues(website.id, auditResolved.id, [{ type: 'description-length', severity: 'warning', detail: 'still short', pageId: null }]);   // a different issue, not title-length
+await store.finishAudit(auditResolved.id, { score: 95, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+await verifyAppliedRecommendations(store, website.id, auditResolved.id);
+const verifiedResolved = await store.getRecommendation(recId);
+ok('SQLite path: applied recommendation whose issue is gone by the next scan verifies "resolved"', verifiedResolved.verified_status === 'resolved' && verifiedResolved.verified_audit_id === auditResolved.id);
+
+// still-present: a second recommendation, off a fresh issue that IS still there on the next scan
+const stillIssue = (await store.listIssues({ websiteId: website.id, auditId: auditResolved.id, type: 'description-length' }))[0];
+const recStill = await store.createRecommendation({ websiteId: website.id, issueId: stillIssue.id, pageId: stillIssue.page_id, type: 'description', currentValue: 'x', proposedValue: 'y', reasoning: 'z', aiProvider: 'anthropic', aiModel: 'claude-sonnet-5' });
+await store.setRecommendationStatus(recStill.id, 'approved', { reviewedBy: 'rec-test@example.com' });
+await store.setRecommendationStatus(recStill.id, 'applied', { applied: true });
+await new Promise((res2) => setTimeout(res2, 5));
+const auditStill = await store.createAudit(website.id, { baseUrl: 'https://hkdevlab.com' });
+await store.createIssues(website.id, auditStill.id, [{ type: 'description-length', severity: 'warning', detail: 'still short', pageId: null }]);
+await store.finishAudit(auditStill.id, { score: 95, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+await verifyAppliedRecommendations(store, website.id, auditStill.id);
+const verifiedStill = await store.getRecommendation(recStill.id);
+ok('SQLite path: applied recommendation whose issue remains verifies "still-present"', verifiedStill.verified_status === 'still-present' && verifiedStill.verified_audit_id === auditStill.id);
+
+// unknown: a recommendation whose source issue can't be resolved
+const recUnknown = await store.createRecommendation({ websiteId: website.id, issueId: 888888, pageId: null, type: 'title', currentValue: 'x', proposedValue: 'y', reasoning: 'z', aiProvider: 'anthropic', aiModel: 'claude-sonnet-5' });
+await store.setRecommendationStatus(recUnknown.id, 'approved', { reviewedBy: 'rec-test@example.com' });
+await store.setRecommendationStatus(recUnknown.id, 'applied', { applied: true });
+await new Promise((res2) => setTimeout(res2, 5));
+const auditUnknown = await store.createAudit(website.id, { baseUrl: 'https://hkdevlab.com' });
+await store.finishAudit(auditUnknown.id, { score: 100, status: 'complete', summary: 'ok', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+await verifyAppliedRecommendations(store, website.id, auditUnknown.id);
+const verifiedUnknown = await store.getRecommendation(recUnknown.id);
+ok('SQLite path: a recommendation with no resolvable source issue verifies "unknown", never fabricated', verifiedUnknown.verified_status === 'unknown' && verifiedUnknown.verified_audit_id === auditUnknown.id);
+
+ok('none of this verification touched site content', JSON.stringify(await store.getContent()) === contentBeforeVerify);
+ok('verification created only the audits THIS test explicitly created — no recursive/extra scans', (await store.listAudits(website.id, 100)).length === auditCountBeforeVerify + 3);
+
+r = await call('GET', '/api/admin/seo/recommendations');
+const nowVerified = r.data.recommendations.find((x) => x.id === recId);
+ok('the verification result is exposed through the existing GET /recommendations API, unchanged endpoint', nowVerified.verified_status === 'resolved');
+
 // reject flow
 r = await call('POST', `/api/admin/seo/issues/${descIssue.id}/recommend`);
 const recId2 = r.data.recommendation.id;

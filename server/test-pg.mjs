@@ -182,6 +182,104 @@ ok('setRecommendationStatus records the reviewer and timestamp', approved.status
 const applied = await store.setRecommendationStatus(rec.id, 'applied', { applied: true });
 ok('…and the applied timestamp on a later call', applied.status === 'applied' && !!applied.applied_at);
 
+/* ───────────── Phase 3 Step 2: recommendation-level verification (PostgreSQL path) ─────────────
+   Three separate websites (resolved / still-present / no-resolvable-issue), so verifying one never
+   touches another — proven explicitly below, not just by construction. */
+const { verifyAppliedRecommendations } = await import(new URL('./seo/jobs.js', import.meta.url).href);
+const mkRec = (websiteId, issueId, pageId) => store.createRecommendation({ websiteId, issueId, pageId, type: 'title', currentValue: 'x', proposedValue: 'y', reasoning: 'z', aiProvider: 'anthropic', aiModel: 'claude-sonnet-5' });
+const applyRec = async (r) => { await store.setRecommendationStatus(r.id, 'approved', { reviewedBy: 'a@x.co' }); return store.setRecommendationStatus(r.id, 'applied', { applied: true }); };
+
+// w4: the issue disappears by the next scan -> resolved. Also seeds pending/approved-only/failed siblings
+// off the SAME issue, to prove verification only ever touches an 'applied' recommendation.
+const w4 = await store.ensureWebsite('verify-test.example', 'Verify Test');
+const auditA = await store.createAudit(w4.id, { baseUrl: 'https://verify-test.example' });
+await store.createIssues(w4.id, auditA.id, [{ type: 'missing-title', severity: 'critical', detail: 'no title' }]);
+await store.finishAudit(auditA.id, { score: 70, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+const issueX = (await store.listIssues({ websiteId: w4.id, auditId: auditA.id }))[0];
+const recApplied = await mkRec(w4.id, issueX.id, issueX.page_id);
+ok('a recommendation created from an issue stores a reliable source-issue reference (issue_id) — not text/title matching', recApplied.issue_id === issueX.id);
+const recPending = await mkRec(w4.id, issueX.id, issueX.page_id);
+const recApprovedOnly = await mkRec(w4.id, issueX.id, issueX.page_id);
+const recFailed = await mkRec(w4.id, issueX.id, issueX.page_id);
+await applyRec(recApplied);
+await store.setRecommendationStatus(recApprovedOnly.id, 'approved', { reviewedBy: 'a@x.co' });   // approved, never applied
+await store.setRecommendationStatus(recFailed.id, 'failed', {});                                  // recPending stays pending
+
+// w5: the issue is still there at the next scan -> still-present.
+const w5 = await store.ensureWebsite('verify-test-2.example', 'Verify Test 2');
+const auditC = await store.createAudit(w5.id, { baseUrl: 'https://verify-test-2.example' });
+await store.createIssues(w5.id, auditC.id, [{ type: 'missing-title', severity: 'critical', detail: 'no title' }]);
+await store.finishAudit(auditC.id, { score: 70, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+const issueY = (await store.listIssues({ websiteId: w5.id, auditId: auditC.id }))[0];
+const recStillPresent = await mkRec(w5.id, issueY.id, issueY.page_id);
+await applyRec(recStillPresent);
+
+// w6: the recommendation's issue can't be resolved at verification time -> unknown, never fabricated.
+const w6 = await store.ensureWebsite('verify-test-3.example', 'Verify Test 3');
+const recNoIssue = await mkRec(w6.id, 999999, null);
+await applyRec(recNoIssue);
+
+await new Promise((r) => setTimeout(r, 5));   // guarantee each "next" audit's started_at strictly postdates its recommendation's applied_at
+const contentBefore = JSON.stringify(await store.getContent());
+
+const auditB = await store.createAudit(w4.id, { baseUrl: 'https://verify-test.example' });   // no issues this time
+await store.finishAudit(auditB.id, { score: 100, status: 'complete', summary: 'no issues', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+const auditD = await store.createAudit(w5.id, { baseUrl: 'https://verify-test-2.example' });
+await store.createIssues(w5.id, auditD.id, [{ type: 'missing-title', severity: 'critical', detail: 'still no title' }]);   // same signature: type + page(null)
+await store.finishAudit(auditD.id, { score: 70, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+const auditE = await store.createAudit(w6.id, { baseUrl: 'https://verify-test-3.example' });
+await store.finishAudit(auditE.id, { score: 100, status: 'complete', summary: 'ok', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+
+const auditCountW4Before = (await store.listAudits(w4.id, 100)).length;
+await verifyAppliedRecommendations(store, w4.id, auditB.id);
+
+const vApplied = await store.getRecommendation(recApplied.id);
+ok('applied recommendation whose issue disappeared by the next scan is verified "resolved"', vApplied.verified_status === 'resolved' && vApplied.verified_audit_id === auditB.id && !!vApplied.verified_at);
+ok('a pending recommendation is never verified', (await store.getRecommendation(recPending.id)).verified_status == null);
+ok('an approved-but-not-applied recommendation is never verified', (await store.getRecommendation(recApprovedOnly.id)).verified_status == null);
+ok('a failed recommendation is never verified', (await store.getRecommendation(recFailed.id)).verified_status == null);
+ok('verifying w4 never touches w5\'s recommendation (cross-website isolation)', (await store.getRecommendation(recStillPresent.id)).verified_status == null);
+ok('verifying w4 never touches w6\'s recommendation either', (await store.getRecommendation(recNoIssue.id)).verified_status == null);
+ok('verification creates no new audit rows — it never triggers a recursive scan', (await store.listAudits(w4.id, 100)).length === auditCountW4Before);
+
+await verifyAppliedRecommendations(store, w5.id, auditD.id);
+const vStill = await store.getRecommendation(recStillPresent.id);
+ok('applied recommendation whose issue is still present at the next scan is verified "still-present"', vStill.verified_status === 'still-present' && vStill.verified_audit_id === auditD.id);
+ok('verifying w5 never re-touches w4\'s already-verified recommendation', (await store.getRecommendation(recApplied.id)).verified_status === 'resolved');
+
+await verifyAppliedRecommendations(store, w6.id, auditE.id);
+const vUnknown = await store.getRecommendation(recNoIssue.id);
+ok('an applied recommendation whose source issue cannot be resolved is safely "unknown", never a fabricated relationship', vUnknown.verified_status === 'unknown' && vUnknown.verified_audit_id === auditE.id);
+
+// repeated calls (a later unrelated scan, or a re-poll) must not corrupt an already-recorded result
+await verifyAppliedRecommendations(store, w4.id, auditB.id);
+await verifyAppliedRecommendations(store, w4.id, auditB.id);
+const reVerified = await store.getRecommendation(recApplied.id);
+ok('repeated verification calls do not corrupt or overwrite an already-recorded result', reVerified.verified_status === 'resolved' && reVerified.verified_at === vApplied.verified_at && reVerified.verified_audit_id === vApplied.verified_audit_id);
+
+ok('none of this touched site content at all', JSON.stringify(await store.getContent()) === contentBefore);
+
+// a verification-time error must never throw out of verifyAppliedRecommendations (so it can never fail the
+// audit that called it) — needs a FRESH unverified 'applied' candidate, since everything above is already verified
+const w7 = await store.ensureWebsite('verify-test-4.example', 'Verify Test 4');
+const auditF = await store.createAudit(w7.id, { baseUrl: 'https://verify-test-4.example' });
+await store.createIssues(w7.id, auditF.id, [{ type: 'missing-title', severity: 'critical', detail: 'x' }]);
+await store.finishAudit(auditF.id, { score: 70, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+const issueZ = (await store.listIssues({ websiteId: w7.id, auditId: auditF.id }))[0];
+const recForErrorTest = await mkRec(w7.id, issueZ.id, issueZ.page_id);
+await applyRec(recForErrorTest);
+await new Promise((r) => setTimeout(r, 5));
+const auditG = await store.createAudit(w7.id, { baseUrl: 'https://verify-test-4.example' });
+await store.finishAudit(auditG.id, { score: 100, status: 'complete', summary: 'ok', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
+
+const realGetIssue = store.getIssue;
+store.getIssue = async () => { throw new Error('simulated verification failure'); };
+let threw = false;
+try { await verifyAppliedRecommendations(store, w7.id, auditG.id); } catch { threw = true; }
+store.getIssue = realGetIssue;
+ok('an unexpected error during verification is swallowed, never thrown back at the caller', threw === false);
+ok('…and the affected recommendation is safely marked "unknown" rather than left in a broken or corrupted state', (await store.getRecommendation(recForErrorTest.id)).verified_status === 'unknown');
+
 // cleanup
 ok('deleteUser', (await store.deleteUser(uid)) === true && (await store.userCount()) === 0);
 ok('remove enquiry', (await store.remove(id)) === true && (await store.list()).length === 0);

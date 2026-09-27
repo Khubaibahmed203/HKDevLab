@@ -130,6 +130,12 @@ export async function createStore({ pool } = {}) {
     ['base_url', 'TEXT'], ['pages_crawled', 'INTEGER'], ['pages_planned', 'INTEGER'], ['errors_count', 'INTEGER'],
     ['duration_ms', 'INTEGER'], ['pagespeed', 'TEXT'],
   ]) await addColumn('seo_audits', column, type);
+  // Phase 3 Step 2: recommendation-level verification. `issue_id` already IS the reliable link to the
+  // originating issue (NOT NULL since Phase 2 — see createRecommendation below), so no new linking column is
+  // needed; these three just record the outcome once a later scan checks whether that issue is still present.
+  for (const [column, type] of [
+    ['verified_status', 'TEXT'], ['verified_at', 'TEXT'], ['verified_audit_id', 'BIGINT'],
+  ]) await addColumn('seo_recommendations', column, type);
 
   const enq = (r) => ({ ...r, id: Number(r.id), email_sent: !!Number(r.email_sent) });
   const website = (r) => r && { ...r, id: Number(r.id) };
@@ -148,7 +154,10 @@ export async function createStore({ pool } = {}) {
   };
   const seoIssue = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), audit_id: Number(r.audit_id), page_id: r.page_id == null ? null : Number(r.page_id) };
   const pageLink = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), audit_id: Number(r.audit_id), from_page_id: Number(r.from_page_id), to_page_id: r.to_page_id == null ? null : Number(r.to_page_id), is_internal: !!Number(r.is_internal) };
-  const recommendation = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), issue_id: Number(r.issue_id), page_id: r.page_id == null ? null : Number(r.page_id) };
+  const recommendation = (r) => r && {
+    ...r, id: Number(r.id), website_id: Number(r.website_id), issue_id: Number(r.issue_id), page_id: r.page_id == null ? null : Number(r.page_id),
+    verified_audit_id: r.verified_audit_id == null ? null : Number(r.verified_audit_id),
+  };
   const user = (r) => r && {
     id: Number(r.id), email: r.email, name: r.name, role: r.role, created_at: r.created_at, last_login_at: r.last_login_at,
     hasPassword: String(r.password_hash || '').startsWith('scrypt:'), googleLinked: !!r.google_sub,
@@ -420,6 +429,22 @@ export async function createStore({ pool } = {}) {
       await db.run(
         `UPDATE seo_recommendations SET status = ?${reviewedBy !== undefined ? ', reviewed_at = ?, reviewed_by = ?' : ''}${applied ? ', applied_at = ?' : ''} WHERE id = ?`,
         [status, ...(reviewedBy !== undefined ? [at, reviewedBy] : []), ...(applied ? [at] : []), id]);
+      return this.getRecommendation(id);
+    },
+
+    /* Phase 3 Step 2: recommendation-level verification — read/analysis only, never touches content or
+       lifecycle `status`. See server/seo/jobs.js's verifyAppliedRecommendations() for the decision logic. */
+    async listUnverifiedApplied(websiteId) {
+      return (await db.all("SELECT * FROM seo_recommendations WHERE website_id = ? AND status = 'applied' AND verified_status IS NULL ORDER BY id", [websiteId])).map(recommendation);
+    },
+    /** Records a verification outcome exactly once: the `AND verified_status IS NULL` guard is an atomic
+     *  compare-and-swap (same idiom as claimAudit()/createAuditIfNoneActive() above), so a recommendation
+     *  that somehow got queued for verification twice (e.g. overlapping scans) is never overwritten a second
+     *  time — repeated verification attempts can't corrupt or flip an already-recorded result. */
+    async setRecommendationVerification(id, { verifiedStatus, verifiedAuditId }) {
+      await db.run(
+        "UPDATE seo_recommendations SET verified_status = ?, verified_at = ?, verified_audit_id = ? WHERE id = ? AND verified_status IS NULL",
+        [verifiedStatus, now(), verifiedAuditId ?? null, id]);
       return this.getRecommendation(id);
     },
   };

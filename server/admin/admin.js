@@ -621,6 +621,17 @@ async function seoRecommendationsView(main) {
   if (!r.ok) return main.append(h('p', { class: 'empty', text: 'Could not load recommendations.' }));
   main.append(...(r.data.recommendations.length ? r.data.recommendations.map((rec) => seoRecommendationCard(rec, () => seoRecommendationsView(main))) : [h('p', { class: 'empty', text: 'No recommendations yet — request one from an issue on the Issues tab.' })]));
 }
+/** Phase 3 Step 2: a small read-only badge showing whether the NEXT scan after this recommendation was
+ *  applied found its originating issue still there. Only shown once a recommendation is 'applied' — nothing
+ *  to verify before then. Reuses the existing pill/meta styles, no new CSS. */
+function seoVerificationBadge(rec) {
+  if (rec.status !== 'applied') return null;
+  if (!rec.verified_status) return h('span', { class: 'meta', text: 'Not verified' });
+  const BY_STATUS = { resolved: ['Verified fixed', 'ok'], 'still-present': ['Still present', 'warning'], unknown: ['Unable to verify', 'info'] };
+  const [label, cls] = BY_STATUS[rec.verified_status] || ['Unable to verify', 'info'];
+  return h('span', { class: `pill ${cls}`, text: label });
+}
+
 function seoRecommendationCard(rec, reload) {
   const approveBtn = h('button', { class: 'btn btn--sm btn--primary', type: 'button', text: 'Approve' });
   const rejectBtn = h('button', { class: 'btn btn--sm', type: 'button', text: 'Reject' });
@@ -634,7 +645,7 @@ function seoRecommendationCard(rec, reload) {
     toast('Applied — live on the site now.'); reload();
   };
   return h('article', { class: 'card' },
-    h('div', { class: 'head' }, h('b', { text: rec.type }), h('span', { class: `pill ${rec.status === 'applied' ? 'ok' : rec.status === 'rejected' || rec.status === 'failed' ? 'bad' : 'info'}`, text: rec.status }), h('span', { class: 'meta', text: `${rec.ai_provider || ''} ${rec.ai_model || ''}` })),
+    h('div', { class: 'head' }, h('b', { text: rec.type }), h('span', { class: `pill ${rec.status === 'applied' ? 'ok' : rec.status === 'rejected' || rec.status === 'failed' ? 'bad' : 'info'}`, text: rec.status }), seoVerificationBadge(rec), h('span', { class: 'meta', text: `${rec.ai_provider || ''} ${rec.ai_model || ''}` })),
     rec.current_value ? h('p', { class: 'meta' }, h('b', { text: 'Current: ' }), rec.current_value) : null,
     h('p', { class: 'msg', text: rec.proposed_value }),
     h('p', { class: 'meta', text: rec.reasoning }),
