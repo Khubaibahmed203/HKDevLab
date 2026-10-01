@@ -164,6 +164,44 @@ ok('server/seo/routes.js does not reference the specialist integration — no ne
 ok('server/seo/orchestrator.js itself is completely unmodified by this step (no reference to the integration module)', !/specialistIntegration/i.test(orchestratorSrc));
 ok('server/seo/specialistRecommendationConverter.js (Step 4J, frozen) is completely unmodified by this step', !/specialistIntegration/i.test(converterSrc));
 
+/* ───────────── Step 4P-B: AuditContext.pagespeed plumbing — additive, read-only, no agent/recommendation
+   behavior change ───────────── */
+
+// A. when an audit HAS persisted PageSpeed data, specialistIntegration.js forwards it into AuditContext.pagespeed
+const pagespeedAudit = await store.createAudit(website.id, { baseUrl: 'https://example.test', pagesPlanned: 1, status: 'running' });
+const pagespeedPageId = await store.upsertPage({ websiteId: website.id, url: 'https://example.test/pagespeed-title', finalUrl: 'https://example.test/pagespeed-title', statusCode: 200, title: longTitle, description: 'Fine.', auditId: pagespeedAudit.id });
+await store.createIssues(website.id, pagespeedAudit.id, [
+  { pageId: pagespeedPageId, type: 'title-length', severity: 'warning', detail: `title is ${longTitle.length} chars` },
+]);
+const realPagespeedResult = { available: true, performanceScore: 73, fetchedAt: '2026-01-01T00:00:00.000Z' };
+await store.finishAudit(pagespeedAudit.id, { score: 80, status: 'complete', summary: '1 page crawled, 1 issue found.', pagesCrawled: 1, errorsCount: 0, durationMs: 5, pagespeed: realPagespeedResult });
+
+const storedPagespeedAudit = await store.getAudit(pagespeedAudit.id);
+ok('sanity: the seeded audit genuinely has persisted PageSpeed data, exactly as fetchPageSpeed() would have returned it', storedPagespeedAudit.pagespeed && storedPagespeedAudit.pagespeed.available === true && storedPagespeedAudit.pagespeed.performanceScore === 73);
+ok('specialistIntegration.js forwards the already-loaded audit.pagespeed into AuditContext.pagespeed verbatim — no transformation, no new metric invented', /pagespeed:\s*audit\.pagespeed\b/.test(integrationSrc));
+// Combined, these two facts prove AuditContext.pagespeed carries exactly {available:true,
+// performanceScore:73, fetchedAt:'2026-01-01T00:00:00.000Z'} for this audit — the identical value
+// server/db.js's own row-shaper already produces, nothing recalculated or enriched.
+
+await runOnPageSpecialistIntegration(store, website.id, pagespeedAudit.id);
+const pagespeedAuditIssues = await store.listIssues({ websiteId: website.id, auditId: pagespeedAudit.id, limit: 10 });
+const pagespeedTitleIssue = pagespeedAuditIssues.find((i) => i.type === 'title-length');
+const pagespeedAuditRecs = await store.listRecommendations({ websiteId: website.id, issueId: pagespeedTitleIssue.id });
+ok('existing recommendation behavior is unchanged: a title finding still becomes a recommendation normally on an audit that now carries PageSpeed data', pagespeedAuditRecs.length === 1 && pagespeedAuditRecs[0].type === 'title');
+ok('no recommendation is ever created merely because PageSpeed data now exists on the audit — no performance-typed or performance-agent-attributed row appears anywhere', !(await store.listRecommendations({ websiteId: website.id })).some((r) => /performance/i.test(r.type) || r.ai_model === 'performance-agent'));
+
+// B. when an audit has NO persisted PageSpeed data (the original `audit` seeded above, finished without a
+// pagespeed argument), the existing absence semantics are preserved — never a fabricated default.
+const noPagespeedAudit = await store.getAudit(audit.id);
+ok('an audit finished without PageSpeed data reads back pagespeed as null — the existing server/db.js absence semantics, never a fabricated default', noPagespeedAudit.pagespeed === null);
+
+// C,D. the five live agents and their order are unchanged by this plumbing-only step, and Performance Agent
+// remains absent from the live array.
+ok('the five-agent live wiring (onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent) is unchanged by the Step 4P-B addition', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent\]/.test(integrationSrc));
+ok('performanceAgent is still never imported into specialistIntegration.js — Performance Agent remains NOT LIVE', !integrationSrc.split('\n').some((l) => /^import /.test(l) && /performanceAgent/i.test(l)));
+const performanceAgentSrc = readFileSync(fileURLToPath(new URL('./seo/performanceAgent.js', import.meta.url)), 'utf8');
+ok('performanceAgent.js itself is untouched by this step — it still declares zero owned issue types', /PERFORMANCE_ISSUE_TYPES = new Set\(\[\]\)/.test(performanceAgentSrc));
+
 await store.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

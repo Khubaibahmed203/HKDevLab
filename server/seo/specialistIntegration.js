@@ -41,6 +41,16 @@ import { crawlLimits } from './limits.js';
  * verification in any way — createRecommendation() is the exact same existing store method the LLM path
  * (server/seo/recommendations.js + routes.js) already uses, called with the same required fields.
  *
+ * STEP 4P-B — AuditContext.pagespeed: the one real performance signal that already existed in this
+ * repository (seo_audits.pagespeed, the single audit-level PageSpeed result — see server/seo/pagespeed.js
+ * and the Step 4P readiness audit) was persisted but never reachable from AuditContext. This step forwards
+ * the already-loaded `audit.pagespeed` value through unchanged — same shape, same null-when-absent semantics
+ * server/db.js's own row-shaper already produces (`r.pagespeed ? JSON.parse(r.pagespeed) : null`), no new
+ * metric, threshold, or transformation invented. It is pure plumbing: performanceAgent.js still declares no
+ * owned issue types and is still NOT part of the agents array below, so this field changes nothing about
+ * what any live agent does — the five live agents below don't read it (each only destructures the specific
+ * fields it already used), and Performance Agent remains unintegrated pending a future, separate step.
+ *
  * ADAPTER NOTE: server/seo/agentContracts.js (Step 4A) documents AuditContext/PageContext/Issue in
  * camelCase, but the real rows server/db.js returns are snake_case (pages.title, not pages.pageId; etc.) —
  * a gap every specialist-agent step since 4A flagged but explicitly left for a future integration step to
@@ -105,7 +115,7 @@ export async function runOnPageSpecialistIntegration(store, websiteId, auditId) 
       store.listIssues({ websiteId, auditId, limit: 5000 }),
     ]);
 
-    const auditContext = { websiteId, auditId, startedAt: audit.started_at, baseUrl: audit.base_url, limits: crawlLimits() };
+    const auditContext = { websiteId, auditId, startedAt: audit.started_at, baseUrl: audit.base_url, limits: crawlLimits(), pagespeed: audit.pagespeed };
     const pages = pageRows.map(toPageContext);
     const issues = issueRows.map(toIssue);
 

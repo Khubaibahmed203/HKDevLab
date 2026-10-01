@@ -32,6 +32,7 @@
  * @property {string} startedAt - seo_audits.started_at (ISO-8601) — existing persisted value
  * @property {string} baseUrl - seo_audits.base_url — existing persisted value, the crawl's starting URL
  * @property {{maxPages: number, maxDepth: number, requestTimeoutMs: number, crawlDelayMs: number}} limits - runtime context, not a persisted column: the crawlLimits() bounds (server/seo/limits.js) the crawl that produced this audit ran under (seo_audits.pages_planned is the persisted snapshot of limits.maxPages captured at queue time)
+ * @property {({available: true, performanceScore: number, fetchedAt: string} | {available: false, reason: string} | null)} [pagespeed] - seo_audits.pagespeed — existing persisted value, exactly as server/seo/pagespeed.js's fetchPageSpeed() returned it for the audit's single start/base URL (never per-page, never re-derived); `null` when no PageSpeed result was ever stored for this audit (the same absence server/db.js's own row-shaper already produces). Added in Step 4P-B purely as data exposure — no issue type, threshold, or specialist agent currently reads this field
  */
 
 /**
