@@ -79,8 +79,10 @@ const directFindings = onPageAgent({
 });
 ok('onPageAgent genuinely does produce a "heading" finding for missing-h1 — it is the converter, not the agent, excluding it', directFindings.length === 1 && directFindings[0].proposedType === 'heading');
 
-/* ───────────── 7. conflict -> no recommendation (wiring-level; only one agent runs live, so no real conflict can occur) ───────────── */
-ok('only one agent (on-page-agent) is ever passed to runOrchestrator() in the live path — no two agents can disagree on the same issue yet', /agents:\s*\[onPageAgent\]/.test(integrationSrc));
+/* ───────────── 7. conflict -> no recommendation (wiring-level; as of Step 4L, On-Page and Technical both run
+   live, but their issue-type ownership never overlaps on real data — see test-seo-technical-integration.mjs
+   for the dedicated two-agent conflict-safety proof using mocks) ───────────── */
+ok('the live path passes exactly [onPageAgent, technicalAgent] to runOrchestrator() (updated for Step 4L — see test-seo-technical-integration.mjs for the full second-agent integration suite)', /agents:\s*\[onPageAgent,\s*technicalAgent\]/.test(integrationSrc));
 // exercise the real conflict path directly through runOrchestrator with two mock agents sharing an issueId,
 // then feed its real `merged`+`conflicts` output through the exact same wiring this module uses
 const mockA = async () => [{ agentName: 'mock-a', issueId: titlePageId + 100000, confidence: 'medium', evidence: [{ source: 'analyzer', ref: 1 }], proposedType: 'title', proposedValue: 'Option A', reasoning: 'x' }];
@@ -142,11 +144,14 @@ const website1RecsUnaffected = await store.listRecommendations({ websiteId: webs
 ok('website 1\'s own recommendations are untouched by a call scoped to website 2', website1RecsUnaffected.length >= 2);
 
 /* ───────────── no other specialist ever executes in the live path ───────────── */
-// Checks actual import statements only — the module's own docstring legitimately NAMES the other five
-// agents in prose, explaining that they are deliberately not imported; that mention must not trip this check.
+// Checks actual import statements only — the module's own docstring legitimately NAMES the other four
+// not-yet-integrated agents in prose, explaining that they are deliberately not imported; that mention must
+// not trip this check. Updated for Step 4L: technicalAgent is now a second expected import alongside
+// onPageAgent (see test-seo-technical-integration.mjs for the full second-agent integration suite);
+// internalLinkAgent/schemaAgent/contentAgent/performanceAgent remain excluded.
 const importLines = integrationSrc.split('\n').filter((l) => /^import /.test(l));
-ok('specialistIntegration.js imports ONLY onPageAgent among the six specialist agents', importLines.some((l) => /onPageAgent/.test(l))
-  && !importLines.some((l) => /technicalAgent|internalLinkAgent|schemaAgent|contentAgent|performanceAgent/i.test(l)));
+ok('specialistIntegration.js imports onPageAgent AND technicalAgent, and no other specialist agent', importLines.some((l) => /onPageAgent/.test(l)) && importLines.some((l) => /technicalAgent/.test(l))
+  && !importLines.some((l) => /internalLinkAgent|schemaAgent|contentAgent|performanceAgent/i.test(l)));
 
 /* ───────────── no live integration beyond the one intended call site ───────────── */
 const jobsSrc = readFileSync(fileURLToPath(new URL('./seo/jobs.js', import.meta.url)), 'utf8');
