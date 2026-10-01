@@ -3,6 +3,7 @@ import { analyzePages } from './pageAnalyzer.js';
 import { scoreFromIssues } from './analyzers.js';   // Phase 1's pure severity-weighted scorer — unchanged, reused as-is
 import { crawlLimits } from './limits.js';
 import { fetchPageSpeed } from './pagespeed.js';
+import { runOnPageSpecialistIntegration } from './specialistIntegration.js';
 
 /**
  * ASYNC SCAN JOBS (Phase 2.1). WEBSITE → REAL CRAWLER → PAGE DISCOVERY → HTML EXTRACTION →
@@ -76,6 +77,10 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
     // The audit is already committed as 'complete' above — nothing past this point can affect that outcome.
     // verifyAppliedRecommendations() never throws (it catches internally); this .catch() is belt-and-suspenders.
     await verifyAppliedRecommendations(store, websiteId, auditId).catch((err) => console.error('[seo] recommendation verification failed:', err.message));
+    // Phase 3 Step 4K: the On-Page specialist agent is the only one wired in so far (see
+    // server/seo/specialistIntegration.js) — same belt-and-suspenders .catch(), same rule: a specialist-layer
+    // problem can never affect an otherwise-successful audit.
+    await runOnPageSpecialistIntegration(store, websiteId, auditId).catch((err) => console.error('[seo] on-page specialist integration failed:', err.message));
   } catch (err) {
     await store.finishAudit(auditId, { score: null, status: 'failed', summary: String(err.message || err), durationMs: Date.now() - startedAt });
   }
