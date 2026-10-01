@@ -1,32 +1,34 @@
 import { onPageAgent } from './onPageAgent.js';
 import { technicalAgent } from './technicalAgent.js';
+import { internalLinkAgent } from './internalLinkAgent.js';
 import { runOrchestrator } from './orchestrator.js';
 import { convertSpecialistFindings } from './specialistRecommendationConverter.js';
 import { crawlLimits } from './limits.js';
 
 /**
- * PHASE 3 STEP 4K/4L — LIVE SPECIALIST INTEGRATION (ON-PAGE + TECHNICAL AGENTS).
+ * PHASE 3 STEP 4K/4L/4M — LIVE SPECIALIST INTEGRATION (ON-PAGE + TECHNICAL + INTERNAL LINK AGENTS).
  *
  * The one new link between the existing, completed audit pipeline and the Step 4A-4J specialist layer:
  *   real persisted audit/pages/issues -> [ADAPTER] -> AuditContext/PageContext[]/Issue[] ->
- *   runOrchestrator({agents:[onPageAgent, technicalAgent]}) -> merged findings -> convertSpecialistFindings() ->
- *   store.createRecommendation() (same table, same 'pending' status, same approve/apply/verify flow as
- *   every existing LLM-sourced recommendation).
+ *   runOrchestrator({agents:[onPageAgent, technicalAgent, internalLinkAgent]}) -> merged findings ->
+ *   convertSpecialistFindings() -> store.createRecommendation() (same table, same 'pending' status, same
+ *   approve/apply/verify flow as every existing LLM-sourced recommendation).
  *
- * Step 4K wired in onPageAgent only. Step 4L adds technicalAgent to the SAME orchestrator call, proving two
- * deterministic specialists can safely coexist. internalLinkAgent/schemaAgent/contentAgent/performanceAgent
- * exist and are fully built (Steps 4E-4H) but are deliberately NOT imported or referenced below — they stay
- * isolated until their own, separate integration steps.
+ * Step 4K wired in onPageAgent only. Step 4L added technicalAgent. Step 4M adds internalLinkAgent to the
+ * SAME orchestrator call, proving three deterministic specialists can safely coexist. schemaAgent/
+ * contentAgent/performanceAgent exist and are fully built (Steps 4F-4H) but are deliberately NOT imported or
+ * referenced below — they stay isolated until their own, separate integration steps.
  *
- * TECHNICAL AGENT AT THE CONVERTER BOUNDARY: technicalAgent's actionable proposedType values
- * ('sitemap-inclusion', 'redirect-target', 'https-upgrade', 'canonical') are NOT in
+ * TECHNICAL/INTERNAL LINK AGENTS AT THE CONVERTER BOUNDARY: technicalAgent's actionable proposedType values
+ * ('sitemap-inclusion', 'redirect-target', 'https-upgrade', 'canonical') and internalLinkAgent's
+ * ('internal-link-target', 'broken-link-review', 'link-to-redirect-review') are NOT in
  * specialistRecommendationConverter.js's SUPPORTED_RECOMMENDATION_TYPES ('title', 'description' only — see
- * that module, frozen since Step 4J). This is expected, not a bug: a Technical finding runs the full
- * Agent -> Orchestrator -> Merge -> Conflict-detection -> Converter path exactly like an On-Page finding, but
- * the converter safely skips it ('unsupported-type') rather than inventing Safe Apply support that
- * server/seo/apply.js does not have. No recommendation row is ever created for a technical finding today;
- * that is intentional and unchanged by this step — see the Step 4D agent's own "identify, never invent"
- * reasoning and the Step 4I audit's Safe Apply Matrix finding.
+ * that module, frozen since Step 4J). This is expected, not a bug: a Technical or Internal Link finding runs
+ * the full Agent -> Orchestrator -> Merge -> Conflict-detection -> Converter path exactly like an On-Page
+ * finding, but the converter safely skips it ('unsupported-type') rather than inventing Safe Apply support
+ * that server/seo/apply.js does not have. No recommendation row is ever created for a technical or internal
+ * link finding today; that is intentional and unchanged by this step — see the Step 4D/4E agents' own
+ * "identify, never invent" reasoning and the Step 4I audit's Safe Apply Matrix finding.
  *
  * This module does not call apply.js, does not change a recommendation's status past 'pending' (the same
  * starting status every existing recommendation gets), and does not touch content, approval, safe-apply, or
@@ -76,15 +78,16 @@ function toIssue(row) {
 }
 
 /**
- * Runs the On-Page and Technical specialists (Steps 4K/4L) through the real, already-persisted facts of one
- * completed audit, and creates 'pending' recommendations for whatever safely converts. Never throws — any
- * failure is caught and logged, exactly like verifyAppliedRecommendations(), so a specialist-layer problem
- * can never affect an otherwise-successful audit. Safe to no-op (creates nothing) if there is nothing to do.
+ * Runs the On-Page, Technical, and Internal Link specialists (Steps 4K/4L/4M) through the real,
+ * already-persisted facts of one completed audit, and creates 'pending' recommendations for whatever safely
+ * converts. Never throws — any failure is caught and logged, exactly like verifyAppliedRecommendations(), so
+ * a specialist-layer problem can never affect an otherwise-successful audit. Safe to no-op (creates nothing)
+ * if there is nothing to do.
  *
  * Name note: this export kept its Step 4K name ("...OnPageSpecialistIntegration") when Step 4L added
- * technicalAgent to the same call, to avoid an unforced rename rippling into server/seo/jobs.js's import —
- * the single call site already reads "the specialist integration," and this docstring is the source of
- * truth for exactly which agents currently run here.
+ * technicalAgent and Step 4M added internalLinkAgent to the same call, to avoid an unforced rename rippling
+ * into server/seo/jobs.js's import — the single call site already reads "the specialist integration," and
+ * this docstring is the source of truth for exactly which agents currently run here.
  */
 export async function runOnPageSpecialistIntegration(store, websiteId, auditId) {
   try {
@@ -100,10 +103,10 @@ export async function runOnPageSpecialistIntegration(store, websiteId, auditId) 
     const pages = pageRows.map(toPageContext);
     const issues = issueRows.map(toIssue);
 
-    // Step 4K+4L: On-Page and Technical both execute here — see the module docstring. The orchestrator
-    // isolates each agent's failures from the other (server/seo/orchestrator.js's per-agent try/catch), so a
-    // Technical Agent problem can never silently drop On-Page's findings, or vice versa.
-    const { merged, conflicts, errors } = await runOrchestrator({ auditContext, pages, issues, agents: [onPageAgent, technicalAgent] });
+    // Step 4K+4L+4M: On-Page, Technical, and Internal Link all execute here — see the module docstring. The
+    // orchestrator isolates each agent's failures from the others (server/seo/orchestrator.js's per-agent
+    // try/catch), so any one specialist's problem can never silently drop another's findings.
+    const { merged, conflicts, errors } = await runOrchestrator({ auditContext, pages, issues, agents: [onPageAgent, technicalAgent, internalLinkAgent] });
     for (const err of errors) console.error('[seo] specialist finding rejected during merge:', err.agentName, err.error);
 
     const { recommendations } = convertSpecialistFindings({ auditContext, pages, issues, mergedFindings: merged, conflicts });
