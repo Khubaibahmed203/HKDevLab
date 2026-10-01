@@ -66,16 +66,17 @@ const pageRowsForContext = [
 ];
 const auditContext = { websiteId: website.id, auditId: audit.id, startedAt: audit.started_at, baseUrl: audit.base_url, limits: { maxPages: 10, maxDepth: 5, requestTimeoutMs: 10000, crawlDelayMs: 0 } };
 
-/* ───────────── 1. on-page and technical both execute (this file's own two-agent proof; Step 4M/4N/4O added
-   a third, fourth, and fifth live agent, internalLinkAgent/schemaAgent/contentAgent — see
-   test-seo-internal-link-integration.mjs, test-seo-schema-integration.mjs, and
-   test-seo-content-integration.mjs for those proofs) ───────────── */
+/* ───────────── 1. on-page and technical both execute (this file's own two-agent proof; Step 4M/4N/4O/4P-G
+   added a third, fourth, fifth, and sixth live agent, internalLinkAgent/schemaAgent/contentAgent/
+   performanceAgent — see test-seo-internal-link-integration.mjs, test-seo-schema-integration.mjs,
+   test-seo-content-integration.mjs, and test-seo-performance-agent.mjs/test-seo-performance-issue.mjs for
+   those proofs) ───────────── */
 const directTechnicalFinding = technicalAgent({ auditContext, pages: pageRowsForContext, issues: [toIssue(canonicalIssue)] });
 ok('technicalAgent genuinely produces a "canonical" finding for a real missing-canonical issue (proves the agent CAN fire)', directTechnicalFinding.length === 1 && directTechnicalFinding[0].proposedType === 'canonical');
 
 const liveOrch = await runOrchestrator({ auditContext, pages: pageRowsForContext, issues: [toIssue(titleIssue), toIssue(canonicalIssue), toIssue(sitemapIssue)], agents: [onPageAgent, technicalAgent] });
 ok('runOrchestrator, called with the real on-page and technical agents, merges findings from BOTH on-page-agent and technical-agent', liveOrch.merged.some((f) => f.agentNames.includes('on-page-agent')) && liveOrch.merged.some((f) => f.agentNames.includes('technical-agent')));
-ok('the live wiring configures onPageAgent and technicalAgent, in that order, as part of its agents array (updated for Step 4O — internalLinkAgent, schemaAgent, and contentAgent now follow them; see test-seo-content-integration.mjs)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent\]/.test(integrationSrc));
+ok('the live wiring configures onPageAgent and technicalAgent, in that order, as part of its agents array (updated for Step 4P-G — internalLinkAgent, schemaAgent, contentAgent, and performanceAgent now follow them)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent,\s*performanceAgent\]/.test(integrationSrc));
 
 /* ───────────── 2. on-page behavior remains intact (regression guard for Step 4K) ───────────── */
 await runOnPageSpecialistIntegration(store, website.id, audit.id);
@@ -119,13 +120,12 @@ let integrationThrew = false;
 try { await runOnPageSpecialistIntegration(store, website.id, audit.id); } catch { integrationThrew = true; }
 ok('the live integration function itself never throws, regardless of individual agent behavior', !integrationThrew);
 
-/* ───────────── 9. no other specialist ever executes in the live path (updated for Step 4M/4N/4O:
-   internalLinkAgent, schemaAgent, and contentAgent are now also expected — see
-   test-seo-internal-link-integration.mjs, test-seo-schema-integration.mjs, and
-   test-seo-content-integration.mjs for their dedicated suites) ───────────── */
+/* ───────────── 9. all six live specialists execute in the live path, and no others (updated for
+   Step 4P-G: performanceAgent is now also expected — see test-seo-performance-agent.mjs and
+   test-seo-performance-issue.mjs for its dedicated suites) ───────────── */
 const importLines = integrationSrc.split('\n').filter((l) => /^import /.test(l));
 ok('specialistIntegration.js imports onPageAgent AND technicalAgent', importLines.some((l) => /onPageAgent/.test(l)) && importLines.some((l) => /technicalAgent/.test(l)));
-ok('specialistIntegration.js never imports performanceAgent', !importLines.some((l) => /performanceAgent/i.test(l)));
+ok('specialistIntegration.js now imports performanceAgent — it is the sixth live specialist', importLines.some((l) => /^import \{ performanceAgent \} from '\.\/performanceAgent\.js';$/.test(l)));
 
 /* ───────────── 10,11. no auto-apply, no auto-approval ───────────── */
 ok('the title recommendation remains "pending" — no auto-apply', titleRec.status === 'pending');

@@ -79,11 +79,12 @@ const directFindings = onPageAgent({
 });
 ok('onPageAgent genuinely does produce a "heading" finding for missing-h1 — it is the converter, not the agent, excluding it', directFindings.length === 1 && directFindings[0].proposedType === 'heading');
 
-/* ───────────── 7. conflict -> no recommendation (wiring-level; as of Step 4O, On-Page, Technical, Internal
-   Link, Schema, and Content all run live, but their issue-type ownership never overlaps on real data — see
-   test-seo-technical-integration.mjs, test-seo-internal-link-integration.mjs, test-seo-schema-integration.mjs,
-   and test-seo-content-integration.mjs for the dedicated multi-agent conflict-safety proofs using mocks) ───────────── */
-ok('the live path passes exactly [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent] to runOrchestrator() (updated for Step 4O — see test-seo-content-integration.mjs for the full fifth-agent integration suite)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent\]/.test(integrationSrc));
+/* ───────────── 7. conflict -> no recommendation (wiring-level; as of Step 4P-G, On-Page, Technical,
+   Internal Link, Schema, Content, and Performance all run live, but their issue-type ownership never
+   overlaps on real data — see test-seo-technical-integration.mjs, test-seo-internal-link-integration.mjs,
+   test-seo-schema-integration.mjs, test-seo-content-integration.mjs, and test-seo-performance-agent.mjs for
+   the dedicated multi-agent conflict-safety proofs using mocks) ───────────── */
+ok('the live path passes exactly [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent, performanceAgent] to runOrchestrator() (updated for Step 4P-G — see test-seo-performance-agent.mjs for the full sixth-agent integration suite)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent,\s*performanceAgent\]/.test(integrationSrc));
 // exercise the real conflict path directly through runOrchestrator with two mock agents sharing an issueId,
 // then feed its real `merged`+`conflicts` output through the exact same wiring this module uses
 const mockA = async () => [{ agentName: 'mock-a', issueId: titlePageId + 100000, confidence: 'medium', evidence: [{ source: 'analyzer', ref: 1 }], proposedType: 'title', proposedValue: 'Option A', reasoning: 'x' }];
@@ -144,15 +145,13 @@ ok('a specialist run scoped to another website\'s nonexistent audit creates noth
 const website1RecsUnaffected = await store.listRecommendations({ websiteId: website.id });
 ok('website 1\'s own recommendations are untouched by a call scoped to website 2', website1RecsUnaffected.length >= 2);
 
-/* ───────────── no other specialist ever executes in the live path ───────────── */
-// Checks actual import statements only — the module's own docstring legitimately NAMES the one
-// not-yet-integrated agent in prose, explaining that it is deliberately not imported; that mention must
-// not trip this check. Updated for Step 4O: contentAgent is now a fifth expected import alongside
-// onPageAgent/technicalAgent/internalLinkAgent/schemaAgent (see test-seo-content-integration.mjs for the
-// full fifth-agent integration suite); performanceAgent remains excluded.
+/* ───────────── all six live specialists execute in the live path ───────────── */
+// Checks actual import statements only. Updated for Step 4P-G: performanceAgent is now a sixth expected
+// import alongside onPageAgent/technicalAgent/internalLinkAgent/schemaAgent/contentAgent (see
+// test-seo-performance-agent.mjs and test-seo-performance-issue.mjs for the full sixth-agent integration
+// suite) — there is no seventh specialist left to exclude; all six built specialists are now live.
 const importLines = integrationSrc.split('\n').filter((l) => /^import /.test(l));
-ok('specialistIntegration.js imports onPageAgent, technicalAgent, internalLinkAgent, schemaAgent AND contentAgent, and no other specialist agent', importLines.some((l) => /onPageAgent/.test(l)) && importLines.some((l) => /technicalAgent/.test(l)) && importLines.some((l) => /internalLinkAgent/.test(l)) && importLines.some((l) => /schemaAgent/.test(l)) && importLines.some((l) => /contentAgent/.test(l))
-  && !importLines.some((l) => /performanceAgent/i.test(l)));
+ok('specialistIntegration.js imports onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent AND performanceAgent — all six built specialists are now live', importLines.some((l) => /onPageAgent/.test(l)) && importLines.some((l) => /technicalAgent/.test(l)) && importLines.some((l) => /internalLinkAgent/.test(l)) && importLines.some((l) => /schemaAgent/.test(l)) && importLines.some((l) => /contentAgent/.test(l)) && importLines.some((l) => /performanceAgent/.test(l)));
 
 /* ───────────── no live integration beyond the one intended call site ───────────── */
 const jobsSrc = readFileSync(fileURLToPath(new URL('./seo/jobs.js', import.meta.url)), 'utf8');
@@ -195,15 +194,12 @@ ok('no recommendation is ever created merely because PageSpeed data now exists o
 const noPagespeedAudit = await store.getAudit(audit.id);
 ok('an audit finished without PageSpeed data reads back pagespeed as null — the existing server/db.js absence semantics, never a fabricated default', noPagespeedAudit.pagespeed === null);
 
-// C,D. the five live agents and their order are unchanged by this plumbing-only step, and Performance Agent
-// remains absent from the live array.
-ok('the five-agent live wiring (onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent) is unchanged by the Step 4P-B addition', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent\]/.test(integrationSrc));
-ok('performanceAgent is still never imported into specialistIntegration.js — Performance Agent remains NOT LIVE', !integrationSrc.split('\n').some((l) => /^import /.test(l) && /performanceAgent/i.test(l)));
-// Updated for Step 4P-E: a human-approved decision (Step 4P-D) gave performanceAgent.js exactly one real
-// issue type to recognize — PERFORMANCE_ISSUE_TYPES is intentionally no longer empty (see
-// test-seo-performance-agent.mjs for the full suite proving that change). What matters for THIS file is
-// unchanged: Performance Agent is still not part of the live specialistIntegration.js array (confirmed
-// immediately above), regardless of what performanceAgent.js itself now recognizes in isolation.
+// C,D. the five original live agents and their relative order are unchanged by the Step 4P-B plumbing
+// addition. Updated for Step 4P-G: Performance Agent is now the sixth live agent, appended after them —
+// this is the one intentional change this later step made to the array itself (see
+// test-seo-performance-agent.mjs and test-seo-performance-issue.mjs for the full sixth-agent suite).
+ok('the five original live agents (onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent) keep their original relative order, with performanceAgent now appended as the sixth', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent,\s*performanceAgent\]/.test(integrationSrc));
+ok('performanceAgent is now imported into specialistIntegration.js — Performance Agent is intentionally LIVE as of Step 4P-G', integrationSrc.split('\n').some((l) => /^import /.test(l) && /performanceAgent/i.test(l)));
 const performanceAgentSrc = readFileSync(fileURLToPath(new URL('./seo/performanceAgent.js', import.meta.url)), 'utf8');
 ok('performanceAgent.js declares exactly the one Step 4P-D/4P-E approved issue type, not empty and not expanded beyond it', /PERFORMANCE_ISSUE_TYPES = new Set\(\['performance-score-low'\]\)/.test(performanceAgentSrc));
 

@@ -299,10 +299,10 @@ ok('server/seo/internalLinkAgent.js is untouched by this step', !/performanceAge
 ok('server/seo/schemaAgent.js is untouched by this step', !/performanceAgent|performance-agent/i.test(schemaSrc));
 ok('server/seo/contentAgent.js is untouched by this step', !/performanceAgent|performance-agent/i.test(contentSrc));
 ok('server/seo/pagespeed.js (the existing PageSpeed client) is completely untouched by this step', !/performanceAgent|performance-agent/i.test(pagespeedSrc));
-// specialistIntegration.js's own docstring legitimately NAMES performanceAgent in prose (explaining why it
-// is deliberately not imported) — checking actual import statements only, same convention used throughout
-// this project's integration tests, so that legitimate mention never trips this check.
-ok('server/seo/specialistIntegration.js was NOT modified to import performanceAgent — Performance Agent remains NOT LIVE in the production specialist array', !specialistIntegrationSrc.split('\n').some((l) => /^import /.test(l) && /performanceAgent/i.test(l)));
+// Updated for Step 4P-G: a human-approved integration step (following the Step 4P-F readiness audit) made
+// performanceAgent the sixth live specialist — checking the actual import statement, not prose mentions,
+// same convention used throughout this project's integration tests.
+ok('server/seo/specialistIntegration.js now imports performanceAgent — Performance Agent is intentionally LIVE in the production specialist array as of Step 4P-G', specialistIntegrationSrc.split('\n').some((l) => /^import /.test(l) && /performanceAgent/i.test(l)));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

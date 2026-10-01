@@ -3,38 +3,42 @@ import { technicalAgent } from './technicalAgent.js';
 import { internalLinkAgent } from './internalLinkAgent.js';
 import { schemaAgent } from './schemaAgent.js';
 import { contentAgent } from './contentAgent.js';
+import { performanceAgent } from './performanceAgent.js';
 import { runOrchestrator } from './orchestrator.js';
 import { convertSpecialistFindings } from './specialistRecommendationConverter.js';
 import { crawlLimits } from './limits.js';
 
 /**
- * PHASE 3 STEP 4K/4L/4M/4N/4O — LIVE SPECIALIST INTEGRATION (ON-PAGE + TECHNICAL + INTERNAL LINK + SCHEMA +
- * CONTENT).
+ * PHASE 3 STEP 4K/4L/4M/4N/4O/4P-G — LIVE SPECIALIST INTEGRATION (ON-PAGE + TECHNICAL + INTERNAL LINK +
+ * SCHEMA + CONTENT + PERFORMANCE).
  *
  * The one new link between the existing, completed audit pipeline and the Step 4A-4J specialist layer:
  *   real persisted audit/pages/issues -> [ADAPTER] -> AuditContext/PageContext[]/Issue[] ->
- *   runOrchestrator({agents:[onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent]}) ->
- *   merged findings -> convertSpecialistFindings() -> store.createRecommendation() (same table, same
- *   'pending' status, same approve/apply/verify flow as every existing LLM-sourced recommendation).
+ *   runOrchestrator({agents:[onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent,
+ *   performanceAgent]}) -> merged findings -> convertSpecialistFindings() -> store.createRecommendation()
+ *   (same table, same 'pending' status, same approve/apply/verify flow as every existing LLM-sourced
+ *   recommendation).
  *
  * Step 4K wired in onPageAgent only. Step 4L added technicalAgent. Step 4M added internalLinkAgent. Step 4N
- * added schemaAgent. Step 4O adds contentAgent to the SAME orchestrator call, proving five deterministic
- * specialists can safely coexist. performanceAgent exists and is fully built (Step 4H) but is deliberately
- * NOT imported or referenced below — it stays isolated until its own, separate integration step.
+ * added schemaAgent. Step 4O added contentAgent. Step 4P-G adds performanceAgent to the SAME orchestrator
+ * call, proving six deterministic specialists can safely coexist. performanceAgent only recognizes one real
+ * issue type ('performance-score-low', created by server/seo/jobs.js — see Step 4P-D/4P-E) and was proven
+ * read-only/converter-safe by the Step 4P-F integration audit before this step added it here.
  *
- * TECHNICAL/INTERNAL LINK/SCHEMA/CONTENT AGENTS AT THE CONVERTER BOUNDARY: technicalAgent's actionable
- * proposedType values ('sitemap-inclusion', 'redirect-target', 'https-upgrade', 'canonical'),
+ * TECHNICAL/INTERNAL LINK/SCHEMA/CONTENT/PERFORMANCE AGENTS AT THE CONVERTER BOUNDARY: technicalAgent's
+ * actionable proposedType values ('sitemap-inclusion', 'redirect-target', 'https-upgrade', 'canonical'),
  * internalLinkAgent's ('internal-link-target', 'broken-link-review', 'link-to-redirect-review'),
- * schemaAgent's ('structured-data-opportunity', 'structured-data-review'), and contentAgent's
- * ('thin-content-review', 'duplicate-content-review') are NOT in specialistRecommendationConverter.js's
- * SUPPORTED_RECOMMENDATION_TYPES ('title', 'description' only — see that module, frozen since Step 4J). This
- * is expected, not a bug: a Technical, Internal Link, Schema, or Content finding runs the full
- * Agent -> Orchestrator -> Merge -> Conflict-detection -> Converter path exactly like an On-Page finding,
- * but the converter safely skips it ('unsupported-type') rather than inventing Safe Apply support that
- * server/seo/apply.js does not have. No recommendation row is ever created for a technical, internal link,
- * schema, or content finding today; that is intentional and unchanged by this step — see the
- * Step 4D/4E/4F/4G agents' own "identify, never invent" (and, for contentAgent, "identify, never generate")
- * reasoning and the Step 4I audit's Safe Apply Matrix finding.
+ * schemaAgent's ('structured-data-opportunity', 'structured-data-review'), contentAgent's
+ * ('thin-content-review', 'duplicate-content-review'), and performanceAgent's ('performance-score-review')
+ * are NOT in specialistRecommendationConverter.js's SUPPORTED_RECOMMENDATION_TYPES ('title', 'description'
+ * only — see that module, frozen since Step 4J). This is expected, not a bug: a Technical, Internal Link,
+ * Schema, Content, or Performance finding runs the full Agent -> Orchestrator -> Merge -> Conflict-detection
+ * -> Converter path exactly like an On-Page finding, but the converter safely skips it ('unsupported-type')
+ * rather than inventing Safe Apply support that server/seo/apply.js does not have. No recommendation row is
+ * ever created for a technical, internal link, schema, content, or performance finding today; that is
+ * intentional and unchanged by this step — see the Step 4D/4E/4F/4G/4H agents' own "identify, never invent"
+ * (and, for contentAgent, "identify, never generate") reasoning and the Step 4I audit's Safe Apply Matrix
+ * finding.
  *
  * This module does not call apply.js, does not change a recommendation's status past 'pending' (the same
  * starting status every existing recommendation gets), and does not touch content, approval, safe-apply, or
@@ -43,13 +47,14 @@ import { crawlLimits } from './limits.js';
  *
  * STEP 4P-B — AuditContext.pagespeed: the one real performance signal that already existed in this
  * repository (seo_audits.pagespeed, the single audit-level PageSpeed result — see server/seo/pagespeed.js
- * and the Step 4P readiness audit) was persisted but never reachable from AuditContext. This step forwards
+ * and the Step 4P readiness audit) was persisted but never reachable from AuditContext. This step forwarded
  * the already-loaded `audit.pagespeed` value through unchanged — same shape, same null-when-absent semantics
  * server/db.js's own row-shaper already produces (`r.pagespeed ? JSON.parse(r.pagespeed) : null`), no new
- * metric, threshold, or transformation invented. It is pure plumbing: performanceAgent.js still declares no
- * owned issue types and is still NOT part of the agents array below, so this field changes nothing about
- * what any live agent does — the five live agents below don't read it (each only destructures the specific
- * fields it already used), and Performance Agent remains unintegrated pending a future, separate step.
+ * metric, threshold, or transformation invented. Note: performanceAgent itself still never reads this field
+ * directly (see its own module docstring) — it only consumes the already-decided 'performance-score-low'
+ * Issue row; AuditContext.pagespeed remains unread by every live agent (each only destructures the specific
+ * fields it already used), including performanceAgent, which Step 4P-G integrated below without this field
+ * ever becoming load-bearing for it.
  *
  * ADAPTER NOTE: server/seo/agentContracts.js (Step 4A) documents AuditContext/PageContext/Issue in
  * camelCase, but the real rows server/db.js returns are snake_case (pages.title, not pages.pageId; etc.) —
@@ -94,16 +99,17 @@ function toIssue(row) {
 }
 
 /**
- * Runs the On-Page, Technical, Internal Link, Schema, and Content specialists (Steps 4K/4L/4M/4N/4O) through
- * the real, already-persisted facts of one completed audit, and creates 'pending' recommendations for
- * whatever safely converts. Never throws — any failure is caught and logged, exactly like
- * verifyAppliedRecommendations(), so a specialist-layer problem can never affect an otherwise-successful
- * audit. Safe to no-op (creates nothing) if there is nothing to do.
+ * Runs the On-Page, Technical, Internal Link, Schema, Content, and Performance specialists (Steps
+ * 4K/4L/4M/4N/4O/4P-G) through the real, already-persisted facts of one completed audit, and creates
+ * 'pending' recommendations for whatever safely converts. Never throws — any failure is caught and logged,
+ * exactly like verifyAppliedRecommendations(), so a specialist-layer problem can never affect an
+ * otherwise-successful audit. Safe to no-op (creates nothing) if there is nothing to do.
  *
- * Name note: this export kept its Step 4K name ("...OnPageSpecialistIntegration") as Step 4L/4M/4N/4O added
- * technicalAgent/internalLinkAgent/schemaAgent/contentAgent to the same call, to avoid an unforced rename
- * rippling into server/seo/jobs.js's import — the single call site already reads "the specialist
- * integration," and this docstring is the source of truth for exactly which agents currently run here.
+ * Name note: this export kept its Step 4K name ("...OnPageSpecialistIntegration") as Step 4L/4M/4N/4O/4P-G
+ * added technicalAgent/internalLinkAgent/schemaAgent/contentAgent/performanceAgent to the same call, to avoid
+ * an unforced rename rippling into server/seo/jobs.js's import — the single call site already reads "the
+ * specialist integration," and this docstring is the source of truth for exactly which agents currently run
+ * here.
  */
 export async function runOnPageSpecialistIntegration(store, websiteId, auditId) {
   try {
@@ -119,11 +125,11 @@ export async function runOnPageSpecialistIntegration(store, websiteId, auditId) 
     const pages = pageRows.map(toPageContext);
     const issues = issueRows.map(toIssue);
 
-    // Step 4K+4L+4M+4N+4O: On-Page, Technical, Internal Link, Schema, and Content all execute here — see the
-    // module docstring. The orchestrator isolates each agent's failures from the others
-    // (server/seo/orchestrator.js's per-agent try/catch), so any one specialist's problem can never silently
-    // drop another's findings.
-    const { merged, conflicts, errors } = await runOrchestrator({ auditContext, pages, issues, agents: [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent] });
+    // Step 4K+4L+4M+4N+4O+4P-G: On-Page, Technical, Internal Link, Schema, Content, and Performance all
+    // execute here — see the module docstring. The orchestrator isolates each agent's failures from the
+    // others (server/seo/orchestrator.js's per-agent try/catch), so any one specialist's problem can never
+    // silently drop another's findings.
+    const { merged, conflicts, errors } = await runOrchestrator({ auditContext, pages, issues, agents: [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent, performanceAgent] });
     for (const err of errors) console.error('[seo] specialist finding rejected during merge:', err.agentName, err.error);
 
     const { recommendations } = convertSpecialistFindings({ auditContext, pages, issues, mergedFindings: merged, conflicts });
