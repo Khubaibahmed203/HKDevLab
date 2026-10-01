@@ -199,8 +199,13 @@ ok('an audit finished without PageSpeed data reads back pagespeed as null — th
 // remains absent from the live array.
 ok('the five-agent live wiring (onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent) is unchanged by the Step 4P-B addition', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent\]/.test(integrationSrc));
 ok('performanceAgent is still never imported into specialistIntegration.js — Performance Agent remains NOT LIVE', !integrationSrc.split('\n').some((l) => /^import /.test(l) && /performanceAgent/i.test(l)));
+// Updated for Step 4P-E: a human-approved decision (Step 4P-D) gave performanceAgent.js exactly one real
+// issue type to recognize — PERFORMANCE_ISSUE_TYPES is intentionally no longer empty (see
+// test-seo-performance-agent.mjs for the full suite proving that change). What matters for THIS file is
+// unchanged: Performance Agent is still not part of the live specialistIntegration.js array (confirmed
+// immediately above), regardless of what performanceAgent.js itself now recognizes in isolation.
 const performanceAgentSrc = readFileSync(fileURLToPath(new URL('./seo/performanceAgent.js', import.meta.url)), 'utf8');
-ok('performanceAgent.js itself is untouched by this step — it still declares zero owned issue types', /PERFORMANCE_ISSUE_TYPES = new Set\(\[\]\)/.test(performanceAgentSrc));
+ok('performanceAgent.js declares exactly the one Step 4P-D/4P-E approved issue type, not empty and not expanded beyond it', /PERFORMANCE_ISSUE_TYPES = new Set\(\['performance-score-low'\]\)/.test(performanceAgentSrc));
 
 await store.close();
 console.log(`\n${pass} passed, ${fail} failed`);

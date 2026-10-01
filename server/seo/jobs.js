@@ -69,6 +69,20 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
     // best-effort, never blocks or fails the scan — see server/seo/pagespeed.js
     const pagespeed = await fetchPageSpeed(crawl.pages[0]?.finalUrl || baseUrl, { timeoutMs: limits.requestTimeoutMs * 1.5 }).catch(() => ({ available: false, reason: 'request failed' }));
 
+    // Phase 3 Step 4P-E: the one approved, audit-level performance issue. This MUST run here, after
+    // fetchPageSpeed() resolves — analyzePages()/createIssues() above already ran before PageSpeed existed,
+    // so this is a second, separate createIssues() call, not an addition to issuesWithPageIds. The threshold
+    // (<50) lives here, at the issue-production layer, per the existing project principle that an analyzer
+    // (not a specialist agent) decides what counts as a problem — see server/seo/performanceAgent.js, which
+    // only ever consumes this already-decided Issue and never recalculates the threshold itself. pageId is
+    // null because PageSpeed measured exactly one URL for the whole audit, never a specific crawled page —
+    // never pretend this single score represents every page on the site.
+    if (pagespeed?.available === true && typeof pagespeed.performanceScore === 'number' && pagespeed.performanceScore < 50) {
+      await store.createIssues(websiteId, auditId, [
+        { pageId: null, type: 'performance-score-low', severity: 'warning', detail: `${baseUrl} scored ${pagespeed.performanceScore}/100 on Google PageSpeed Insights (mobile, lab data).` },
+      ]);
+    }
+
     const score = scoreFromIssues(issues);
     await store.finishAudit(auditId, {
       score, status: 'complete', summary: `${crawl.pages.length} page(s) crawled, ${issues.length} issue(s) found.`,
