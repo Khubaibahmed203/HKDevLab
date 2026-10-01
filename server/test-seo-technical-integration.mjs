@@ -66,14 +66,15 @@ const pageRowsForContext = [
 ];
 const auditContext = { websiteId: website.id, auditId: audit.id, startedAt: audit.started_at, baseUrl: audit.base_url, limits: { maxPages: 10, maxDepth: 5, requestTimeoutMs: 10000, crawlDelayMs: 0 } };
 
-/* ───────────── 1. on-page and technical both execute (this file's own two-agent proof; Step 4M added a
-   third live agent, internalLinkAgent — see test-seo-internal-link-integration.mjs for that proof) ───────────── */
+/* ───────────── 1. on-page and technical both execute (this file's own two-agent proof; Step 4M/4N added a
+   third and fourth live agent, internalLinkAgent/schemaAgent — see test-seo-internal-link-integration.mjs
+   and test-seo-schema-integration.mjs for those proofs) ───────────── */
 const directTechnicalFinding = technicalAgent({ auditContext, pages: pageRowsForContext, issues: [toIssue(canonicalIssue)] });
 ok('technicalAgent genuinely produces a "canonical" finding for a real missing-canonical issue (proves the agent CAN fire)', directTechnicalFinding.length === 1 && directTechnicalFinding[0].proposedType === 'canonical');
 
 const liveOrch = await runOrchestrator({ auditContext, pages: pageRowsForContext, issues: [toIssue(titleIssue), toIssue(canonicalIssue), toIssue(sitemapIssue)], agents: [onPageAgent, technicalAgent] });
 ok('runOrchestrator, called with the real on-page and technical agents, merges findings from BOTH on-page-agent and technical-agent', liveOrch.merged.some((f) => f.agentNames.includes('on-page-agent')) && liveOrch.merged.some((f) => f.agentNames.includes('technical-agent')));
-ok('the live wiring configures onPageAgent and technicalAgent, in that order, as part of its agents array (updated for Step 4M — a third agent, internalLinkAgent, now follows them; see test-seo-internal-link-integration.mjs)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent\]/.test(integrationSrc));
+ok('the live wiring configures onPageAgent and technicalAgent, in that order, as part of its agents array (updated for Step 4N — internalLinkAgent and schemaAgent now follow them; see test-seo-schema-integration.mjs)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent\]/.test(integrationSrc));
 
 /* ───────────── 2. on-page behavior remains intact (regression guard for Step 4K) ───────────── */
 await runOnPageSpecialistIntegration(store, website.id, audit.id);
@@ -117,11 +118,12 @@ let integrationThrew = false;
 try { await runOnPageSpecialistIntegration(store, website.id, audit.id); } catch { integrationThrew = true; }
 ok('the live integration function itself never throws, regardless of individual agent behavior', !integrationThrew);
 
-/* ───────────── 9. no other specialist ever executes in the live path (updated for Step 4M: internalLinkAgent
-   is now also expected — see test-seo-internal-link-integration.mjs for its dedicated suite) ───────────── */
+/* ───────────── 9. no other specialist ever executes in the live path (updated for Step 4M/4N:
+   internalLinkAgent and schemaAgent are now also expected — see test-seo-internal-link-integration.mjs and
+   test-seo-schema-integration.mjs for their dedicated suites) ───────────── */
 const importLines = integrationSrc.split('\n').filter((l) => /^import /.test(l));
 ok('specialistIntegration.js imports onPageAgent AND technicalAgent', importLines.some((l) => /onPageAgent/.test(l)) && importLines.some((l) => /technicalAgent/.test(l)));
-ok('specialistIntegration.js imports NEITHER schemaAgent, contentAgent, NOR performanceAgent', !importLines.some((l) => /schemaAgent|contentAgent|performanceAgent/i.test(l)));
+ok('specialistIntegration.js imports NEITHER contentAgent NOR performanceAgent', !importLines.some((l) => /contentAgent|performanceAgent/i.test(l)));
 
 /* ───────────── 10,11. no auto-apply, no auto-approval ───────────── */
 ok('the title recommendation remains "pending" — no auto-apply', titleRec.status === 'pending');
