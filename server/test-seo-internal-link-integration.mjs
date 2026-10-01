@@ -79,9 +79,10 @@ const pageRowsForContext = [
 const auditContext = { websiteId: website.id, auditId: audit.id, startedAt: audit.started_at, baseUrl: audit.base_url, limits: { maxPages: 10, maxDepth: 5, requestTimeoutMs: 10000, crawlDelayMs: 0 } };
 const allIssuesForContext = [toIssue(titleIssue), toIssue(canonicalIssue), toIssue(orphanIssue), toIssue(brokenLinkIssue), toIssue(redirectLinkIssue)];
 
-/* ───────────── 1. on-page/technical/internal-link all execute (this file's own three-agent proof; Step 4N
-   added a fourth live agent, schemaAgent — see test-seo-schema-integration.mjs for that proof) ───────────── */
-ok('the live wiring configures onPageAgent, technicalAgent, and internalLinkAgent, in that order, as part of its agents array (updated for Step 4N — schemaAgent now follows them; see test-seo-schema-integration.mjs)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent\]/.test(integrationSrc));
+/* ───────────── 1. on-page/technical/internal-link all execute (this file's own three-agent proof; Step
+   4N/4O added a fourth and fifth live agent, schemaAgent/contentAgent — see test-seo-schema-integration.mjs
+   and test-seo-content-integration.mjs for those proofs) ───────────── */
+ok('the live wiring configures onPageAgent, technicalAgent, and internalLinkAgent, in that order, as part of its agents array (updated for Step 4O — schemaAgent and contentAgent now follow them; see test-seo-content-integration.mjs)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent\]/.test(integrationSrc));
 
 const directOrphanFinding = internalLinkAgent({ auditContext, pages: pageRowsForContext, issues: [toIssue(orphanIssue)] });
 const directBrokenFinding = internalLinkAgent({ auditContext, pages: pageRowsForContext, issues: [toIssue(brokenLinkIssue)] });
@@ -126,11 +127,12 @@ ok('specialistIntegration.js never imports crawler.js (no recursive scan)', !/fr
 // handling docstring) — checking actual import statements only, same convention used elsewhere in this suite.
 ok('specialistIntegration.js never imports jobs.js (and so cannot call its verification logic)', !integrationSrc.split('\n').some((l) => /^import / .test(l) && /jobs\.js/.test(l)));
 
-/* ───────────── 7. specialist isolation: Content and Performance are not imported into live wiring (updated
-   for Step 4N: schemaAgent is now also expected — see test-seo-schema-integration.mjs) ───────────── */
+/* ───────────── 7. specialist isolation: Performance is not imported into live wiring (updated for Step
+   4N/4O: schemaAgent and contentAgent are now also expected — see test-seo-schema-integration.mjs and
+   test-seo-content-integration.mjs) ───────────── */
 const importLines = integrationSrc.split('\n').filter((l) => /^import /.test(l));
 ok('specialistIntegration.js imports onPageAgent, technicalAgent AND internalLinkAgent', importLines.some((l) => /onPageAgent/.test(l)) && importLines.some((l) => /technicalAgent/.test(l)) && importLines.some((l) => /internalLinkAgent/.test(l)));
-ok('specialistIntegration.js imports NEITHER contentAgent NOR performanceAgent', !importLines.some((l) => /contentAgent|performanceAgent/i.test(l)));
+ok('specialistIntegration.js never imports performanceAgent', !importLines.some((l) => /performanceAgent/i.test(l)));
 
 /* ───────────── conflict safety in the three-agent era: no winner is ever picked ───────────── */
 const mockA = async () => [{ agentName: 'mock-a', issueId: titleIssue.id + 700000, confidence: 'medium', evidence: [{ source: 'analyzer', ref: 1 }], proposedType: 'title', proposedValue: 'Option A', reasoning: 'x' }];

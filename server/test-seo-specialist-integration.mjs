@@ -79,11 +79,11 @@ const directFindings = onPageAgent({
 });
 ok('onPageAgent genuinely does produce a "heading" finding for missing-h1 — it is the converter, not the agent, excluding it', directFindings.length === 1 && directFindings[0].proposedType === 'heading');
 
-/* ───────────── 7. conflict -> no recommendation (wiring-level; as of Step 4N, On-Page, Technical, Internal
-   Link, and Schema all run live, but their issue-type ownership never overlaps on real data — see
-   test-seo-technical-integration.mjs, test-seo-internal-link-integration.mjs, and
-   test-seo-schema-integration.mjs for the dedicated multi-agent conflict-safety proofs using mocks) ───────────── */
-ok('the live path passes exactly [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent] to runOrchestrator() (updated for Step 4N — see test-seo-schema-integration.mjs for the full fourth-agent integration suite)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent\]/.test(integrationSrc));
+/* ───────────── 7. conflict -> no recommendation (wiring-level; as of Step 4O, On-Page, Technical, Internal
+   Link, Schema, and Content all run live, but their issue-type ownership never overlaps on real data — see
+   test-seo-technical-integration.mjs, test-seo-internal-link-integration.mjs, test-seo-schema-integration.mjs,
+   and test-seo-content-integration.mjs for the dedicated multi-agent conflict-safety proofs using mocks) ───────────── */
+ok('the live path passes exactly [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent] to runOrchestrator() (updated for Step 4O — see test-seo-content-integration.mjs for the full fifth-agent integration suite)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent\]/.test(integrationSrc));
 // exercise the real conflict path directly through runOrchestrator with two mock agents sharing an issueId,
 // then feed its real `merged`+`conflicts` output through the exact same wiring this module uses
 const mockA = async () => [{ agentName: 'mock-a', issueId: titlePageId + 100000, confidence: 'medium', evidence: [{ source: 'analyzer', ref: 1 }], proposedType: 'title', proposedValue: 'Option A', reasoning: 'x' }];
@@ -145,14 +145,14 @@ const website1RecsUnaffected = await store.listRecommendations({ websiteId: webs
 ok('website 1\'s own recommendations are untouched by a call scoped to website 2', website1RecsUnaffected.length >= 2);
 
 /* ───────────── no other specialist ever executes in the live path ───────────── */
-// Checks actual import statements only — the module's own docstring legitimately NAMES the other two
-// not-yet-integrated agents in prose, explaining that they are deliberately not imported; that mention must
-// not trip this check. Updated for Step 4N: schemaAgent is now a fourth expected import alongside
-// onPageAgent/technicalAgent/internalLinkAgent (see test-seo-schema-integration.mjs for the full
-// fourth-agent integration suite); contentAgent/performanceAgent remain excluded.
+// Checks actual import statements only — the module's own docstring legitimately NAMES the one
+// not-yet-integrated agent in prose, explaining that it is deliberately not imported; that mention must
+// not trip this check. Updated for Step 4O: contentAgent is now a fifth expected import alongside
+// onPageAgent/technicalAgent/internalLinkAgent/schemaAgent (see test-seo-content-integration.mjs for the
+// full fifth-agent integration suite); performanceAgent remains excluded.
 const importLines = integrationSrc.split('\n').filter((l) => /^import /.test(l));
-ok('specialistIntegration.js imports onPageAgent, technicalAgent, internalLinkAgent AND schemaAgent, and no other specialist agent', importLines.some((l) => /onPageAgent/.test(l)) && importLines.some((l) => /technicalAgent/.test(l)) && importLines.some((l) => /internalLinkAgent/.test(l)) && importLines.some((l) => /schemaAgent/.test(l))
-  && !importLines.some((l) => /contentAgent|performanceAgent/i.test(l)));
+ok('specialistIntegration.js imports onPageAgent, technicalAgent, internalLinkAgent, schemaAgent AND contentAgent, and no other specialist agent', importLines.some((l) => /onPageAgent/.test(l)) && importLines.some((l) => /technicalAgent/.test(l)) && importLines.some((l) => /internalLinkAgent/.test(l)) && importLines.some((l) => /schemaAgent/.test(l)) && importLines.some((l) => /contentAgent/.test(l))
+  && !importLines.some((l) => /performanceAgent/i.test(l)));
 
 /* ───────────── no live integration beyond the one intended call site ───────────── */
 const jobsSrc = readFileSync(fileURLToPath(new URL('./seo/jobs.js', import.meta.url)), 'utf8');

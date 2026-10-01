@@ -2,36 +2,39 @@ import { onPageAgent } from './onPageAgent.js';
 import { technicalAgent } from './technicalAgent.js';
 import { internalLinkAgent } from './internalLinkAgent.js';
 import { schemaAgent } from './schemaAgent.js';
+import { contentAgent } from './contentAgent.js';
 import { runOrchestrator } from './orchestrator.js';
 import { convertSpecialistFindings } from './specialistRecommendationConverter.js';
 import { crawlLimits } from './limits.js';
 
 /**
- * PHASE 3 STEP 4K/4L/4M/4N — LIVE SPECIALIST INTEGRATION (ON-PAGE + TECHNICAL + INTERNAL LINK + SCHEMA).
+ * PHASE 3 STEP 4K/4L/4M/4N/4O — LIVE SPECIALIST INTEGRATION (ON-PAGE + TECHNICAL + INTERNAL LINK + SCHEMA +
+ * CONTENT).
  *
  * The one new link between the existing, completed audit pipeline and the Step 4A-4J specialist layer:
  *   real persisted audit/pages/issues -> [ADAPTER] -> AuditContext/PageContext[]/Issue[] ->
- *   runOrchestrator({agents:[onPageAgent, technicalAgent, internalLinkAgent, schemaAgent]}) -> merged
- *   findings -> convertSpecialistFindings() -> store.createRecommendation() (same table, same 'pending'
- *   status, same approve/apply/verify flow as every existing LLM-sourced recommendation).
+ *   runOrchestrator({agents:[onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent]}) ->
+ *   merged findings -> convertSpecialistFindings() -> store.createRecommendation() (same table, same
+ *   'pending' status, same approve/apply/verify flow as every existing LLM-sourced recommendation).
  *
  * Step 4K wired in onPageAgent only. Step 4L added technicalAgent. Step 4M added internalLinkAgent. Step 4N
- * adds schemaAgent to the SAME orchestrator call, proving four deterministic specialists can safely coexist.
- * contentAgent/performanceAgent exist and are fully built (Steps 4G-4H) but are deliberately NOT imported or
- * referenced below — they stay isolated until their own, separate integration steps.
+ * added schemaAgent. Step 4O adds contentAgent to the SAME orchestrator call, proving five deterministic
+ * specialists can safely coexist. performanceAgent exists and is fully built (Step 4H) but is deliberately
+ * NOT imported or referenced below — it stays isolated until its own, separate integration step.
  *
- * TECHNICAL/INTERNAL LINK/SCHEMA AGENTS AT THE CONVERTER BOUNDARY: technicalAgent's actionable proposedType
- * values ('sitemap-inclusion', 'redirect-target', 'https-upgrade', 'canonical'), internalLinkAgent's
- * ('internal-link-target', 'broken-link-review', 'link-to-redirect-review'), and schemaAgent's
- * ('structured-data-opportunity', 'structured-data-review') are NOT in
- * specialistRecommendationConverter.js's SUPPORTED_RECOMMENDATION_TYPES ('title', 'description' only — see
- * that module, frozen since Step 4J). This is expected, not a bug: a Technical, Internal Link, or Schema
- * finding runs the full Agent -> Orchestrator -> Merge -> Conflict-detection -> Converter path exactly like
- * an On-Page finding, but the converter safely skips it ('unsupported-type') rather than inventing Safe
- * Apply support that server/seo/apply.js does not have. No recommendation row is ever created for a
- * technical, internal link, or schema finding today; that is intentional and unchanged by this step — see
- * the Step 4D/4E/4F agents' own "identify, never invent" reasoning and the Step 4I audit's Safe Apply Matrix
- * finding.
+ * TECHNICAL/INTERNAL LINK/SCHEMA/CONTENT AGENTS AT THE CONVERTER BOUNDARY: technicalAgent's actionable
+ * proposedType values ('sitemap-inclusion', 'redirect-target', 'https-upgrade', 'canonical'),
+ * internalLinkAgent's ('internal-link-target', 'broken-link-review', 'link-to-redirect-review'),
+ * schemaAgent's ('structured-data-opportunity', 'structured-data-review'), and contentAgent's
+ * ('thin-content-review', 'duplicate-content-review') are NOT in specialistRecommendationConverter.js's
+ * SUPPORTED_RECOMMENDATION_TYPES ('title', 'description' only — see that module, frozen since Step 4J). This
+ * is expected, not a bug: a Technical, Internal Link, Schema, or Content finding runs the full
+ * Agent -> Orchestrator -> Merge -> Conflict-detection -> Converter path exactly like an On-Page finding,
+ * but the converter safely skips it ('unsupported-type') rather than inventing Safe Apply support that
+ * server/seo/apply.js does not have. No recommendation row is ever created for a technical, internal link,
+ * schema, or content finding today; that is intentional and unchanged by this step — see the
+ * Step 4D/4E/4F/4G agents' own "identify, never invent" (and, for contentAgent, "identify, never generate")
+ * reasoning and the Step 4I audit's Safe Apply Matrix finding.
  *
  * This module does not call apply.js, does not change a recommendation's status past 'pending' (the same
  * starting status every existing recommendation gets), and does not touch content, approval, safe-apply, or
@@ -81,16 +84,16 @@ function toIssue(row) {
 }
 
 /**
- * Runs the On-Page, Technical, Internal Link, and Schema specialists (Steps 4K/4L/4M/4N) through the real,
- * already-persisted facts of one completed audit, and creates 'pending' recommendations for whatever safely
- * converts. Never throws — any failure is caught and logged, exactly like verifyAppliedRecommendations(), so
- * a specialist-layer problem can never affect an otherwise-successful audit. Safe to no-op (creates nothing)
- * if there is nothing to do.
+ * Runs the On-Page, Technical, Internal Link, Schema, and Content specialists (Steps 4K/4L/4M/4N/4O) through
+ * the real, already-persisted facts of one completed audit, and creates 'pending' recommendations for
+ * whatever safely converts. Never throws — any failure is caught and logged, exactly like
+ * verifyAppliedRecommendations(), so a specialist-layer problem can never affect an otherwise-successful
+ * audit. Safe to no-op (creates nothing) if there is nothing to do.
  *
- * Name note: this export kept its Step 4K name ("...OnPageSpecialistIntegration") as Step 4L/4M/4N added
- * technicalAgent/internalLinkAgent/schemaAgent to the same call, to avoid an unforced rename rippling into
- * server/seo/jobs.js's import — the single call site already reads "the specialist integration," and this
- * docstring is the source of truth for exactly which agents currently run here.
+ * Name note: this export kept its Step 4K name ("...OnPageSpecialistIntegration") as Step 4L/4M/4N/4O added
+ * technicalAgent/internalLinkAgent/schemaAgent/contentAgent to the same call, to avoid an unforced rename
+ * rippling into server/seo/jobs.js's import — the single call site already reads "the specialist
+ * integration," and this docstring is the source of truth for exactly which agents currently run here.
  */
 export async function runOnPageSpecialistIntegration(store, websiteId, auditId) {
   try {
@@ -106,11 +109,11 @@ export async function runOnPageSpecialistIntegration(store, websiteId, auditId) 
     const pages = pageRows.map(toPageContext);
     const issues = issueRows.map(toIssue);
 
-    // Step 4K+4L+4M+4N: On-Page, Technical, Internal Link, and Schema all execute here — see the module
-    // docstring. The orchestrator isolates each agent's failures from the others
+    // Step 4K+4L+4M+4N+4O: On-Page, Technical, Internal Link, Schema, and Content all execute here — see the
+    // module docstring. The orchestrator isolates each agent's failures from the others
     // (server/seo/orchestrator.js's per-agent try/catch), so any one specialist's problem can never silently
     // drop another's findings.
-    const { merged, conflicts, errors } = await runOrchestrator({ auditContext, pages, issues, agents: [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent] });
+    const { merged, conflicts, errors } = await runOrchestrator({ auditContext, pages, issues, agents: [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent] });
     for (const err of errors) console.error('[seo] specialist finding rejected during merge:', err.agentName, err.error);
 
     const { recommendations } = convertSpecialistFindings({ auditContext, pages, issues, mergedFindings: merged, conflicts });

@@ -80,8 +80,10 @@ const pageRowsForContext = [
 const auditContext = { websiteId: website.id, auditId: audit.id, startedAt: audit.started_at, baseUrl: audit.base_url, limits: { maxPages: 10, maxDepth: 5, requestTimeoutMs: 10000, crawlDelayMs: 0 } };
 const allIssuesForContext = [toIssue(titleIssue), toIssue(canonicalIssue), toIssue(orphanIssue), toIssue(missingJsonLdIssue), toIssue(invalidJsonLdIssue)];
 
-/* ───────────── Test 1: four-agent invariant — actual agent identities, not merely array length ───────────── */
-ok('the live wiring literally configures agents: [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent] in specialistIntegration.js', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent\]/.test(integrationSrc));
+/* ───────────── Test 1: on-page/technical/internal-link/schema all execute (this file's own four-agent
+   proof; Step 4O added a fifth live agent, contentAgent — see test-seo-content-integration.mjs for that
+   proof) ───────────── */
+ok('the live wiring configures onPageAgent, technicalAgent, internalLinkAgent, and schemaAgent, in that order, as part of its agents array (updated for Step 4O — contentAgent now follows them; see test-seo-content-integration.mjs)', /agents:\s*\[onPageAgent,\s*technicalAgent,\s*internalLinkAgent,\s*schemaAgent,\s*contentAgent\]/.test(integrationSrc));
 
 const liveOrch = await runOrchestrator({ auditContext, pages: pageRowsForContext, issues: allIssuesForContext, agents: [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent] });
 ok('runOrchestrator, called exactly as the live wiring calls it, merges findings identified by all four real agent names', liveOrch.merged.some((f) => f.agentNames.includes('on-page-agent')) && liveOrch.merged.some((f) => f.agentNames.includes('technical-agent')) && liveOrch.merged.some((f) => f.agentNames.includes('internal-link-agent')) && liveOrch.merged.some((f) => f.agentNames.includes('schema-agent')));
@@ -133,10 +135,11 @@ ok('specialistIntegration.js never imports jobs.js (and so cannot call or bypass
 const schemaAgentSrc = readFileSync(fileURLToPath(new URL('./seo/schemaAgent.js', import.meta.url)), 'utf8');
 ok('schemaAgent.js is never modified to generate or implement a structured-data payload — it never imports content/seo.js', !schemaAgentSrc.split('\n').some((l) => /^import /.test(l) && /seo\.js/.test(l)));
 
-/* ───────────── Test 9: Content and Performance remain disabled ───────────── */
+/* ───────────── Test 9: Performance remains disabled (updated for Step 4O: contentAgent is now also
+   expected — see test-seo-content-integration.mjs for its dedicated suite) ───────────── */
 const importLines = integrationSrc.split('\n').filter((l) => /^import /.test(l));
 ok('specialistIntegration.js imports onPageAgent, technicalAgent, internalLinkAgent AND schemaAgent', importLines.some((l) => /onPageAgent/.test(l)) && importLines.some((l) => /technicalAgent/.test(l)) && importLines.some((l) => /internalLinkAgent/.test(l)) && importLines.some((l) => /schemaAgent/.test(l)));
-ok('specialistIntegration.js imports NEITHER contentAgent NOR performanceAgent', !importLines.some((l) => /contentAgent|performanceAgent/i.test(l)));
+ok('specialistIntegration.js never imports performanceAgent', !importLines.some((l) => /performanceAgent/i.test(l)));
 
 /* ───────────── conflict safety in the four-agent era: no winner is ever picked ───────────── */
 const mockA = async () => [{ agentName: 'mock-a', issueId: titleIssue.id + 900000, confidence: 'medium', evidence: [{ source: 'analyzer', ref: 1 }], proposedType: 'title', proposedValue: 'Option A', reasoning: 'x' }];
