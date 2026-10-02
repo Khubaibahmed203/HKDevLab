@@ -150,11 +150,19 @@ function toIssue(row) {
  * an unforced rename rippling into server/seo/jobs.js's import — the single call site already reads "the
  * specialist integration," and this docstring is the source of truth for exactly which agents currently run
  * here.
+ *
+ * Step 4W.2 — RETURN VALUE: always resolves to `{conflicts, skipped, errors}` (never throws, never resolves
+ * to undefined) — the exact orchestrator `conflicts`/`errors` and converter `skipped` objects already
+ * computed above, for server/seo/jobs.js to persist as observability-only diagnostics (seo_audits.specialist_diagnostics).
+ * This is purely additive: before this step the return value was implicitly discarded by every caller, so no
+ * existing behavior changes. Returning these objects does not alter which recommendations are created,
+ * skipped, or deduplicated.
  */
 export async function runOnPageSpecialistIntegration(store, websiteId, auditId) {
+  const EMPTY_DIAGNOSTICS = { conflicts: [], skipped: [], errors: [] };
   try {
     const audit = await store.getAudit(auditId);
-    if (!audit || !audit.started_at) return;   // nothing to build a trustworthy AuditContext from
+    if (!audit || !audit.started_at) return EMPTY_DIAGNOSTICS;   // nothing to build a trustworthy AuditContext from
 
     const [pageRows, issueRows] = await Promise.all([
       store.listPages(websiteId),
@@ -172,7 +180,7 @@ export async function runOnPageSpecialistIntegration(store, websiteId, auditId) 
     const { merged, conflicts, errors } = await runOrchestrator({ auditContext, pages, issues, agents: [onPageAgent, technicalAgent, internalLinkAgent, schemaAgent, contentAgent, performanceAgent] });
     for (const err of errors) console.error('[seo] specialist finding rejected during merge:', err.agentName, err.error);
 
-    const { recommendations } = convertSpecialistFindings({ auditContext, pages, issues, mergedFindings: merged, conflicts });
+    const { recommendations, skipped } = convertSpecialistFindings({ auditContext, pages, issues, mergedFindings: merged, conflicts });
 
     for (const rec of recommendations) {
       // Step 4S — cross-audit duplicate check by (websiteId, pageId, type), not issueId (see the module
@@ -182,7 +190,14 @@ export async function runOnPageSpecialistIntegration(store, websiteId, auditId) 
       if (shouldSkipDuplicateSpecialistRecommendation(existing)) continue;
       await store.createRecommendation(rec);   // starts 'pending' — identical state machine to every existing recommendation
     }
+
+    // Step 4W.2 — observability only: these exact objects (see orchestrator.js/specialistRecommendationConverter.js
+    // for their shapes) were already computed above and previously discarded once they'd served their
+    // immediate purpose here. Returning them changes nothing about what was created/skipped/deduplicated —
+    // the caller (server/seo/jobs.js) only persists them for diagnostic visibility.
+    return { conflicts, skipped, errors };
   } catch (err) {
     console.error('[seo] specialist integration failed — the audit itself is unaffected:', err.message);
+    return EMPTY_DIAGNOSTICS;
   }
 }

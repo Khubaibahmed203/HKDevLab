@@ -94,7 +94,15 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
     // Phase 3 Step 4K: the On-Page specialist agent is the only one wired in so far (see
     // server/seo/specialistIntegration.js) — same belt-and-suspenders .catch(), same rule: a specialist-layer
     // problem can never affect an otherwise-successful audit.
-    await runOnPageSpecialistIntegration(store, websiteId, auditId).catch((err) => console.error('[seo] on-page specialist integration failed:', err.message));
+    const diagnostics = await runOnPageSpecialistIntegration(store, websiteId, auditId)
+      .catch((err) => { console.error('[seo] on-page specialist integration failed:', err.message); return null; });
+    // Phase 3 Step 4W.2: persist the already-computed conflicts/skipped/errors for observability only — this
+    // audit was already committed 'complete' above, and this write can never affect that outcome. `diagnostics`
+    // is only null if the belt-and-suspenders .catch() just above fired — the specialist integration function
+    // itself already returns its own empty-shape fallback on every one of its handled failure paths.
+    if (diagnostics) {
+      await store.setSpecialistDiagnostics(auditId, diagnostics).catch((err) => console.error('[seo] persisting specialist diagnostics failed:', err.message));
+    }
   } catch (err) {
     await store.finishAudit(auditId, { score: null, status: 'failed', summary: String(err.message || err), durationMs: Date.now() - startedAt });
   }

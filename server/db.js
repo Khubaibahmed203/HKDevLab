@@ -128,7 +128,7 @@ export async function createStore({ pool } = {}) {
   ]) await addColumn('pages', column, type);
   for (const [column, type] of [
     ['base_url', 'TEXT'], ['pages_crawled', 'INTEGER'], ['pages_planned', 'INTEGER'], ['errors_count', 'INTEGER'],
-    ['duration_ms', 'INTEGER'], ['pagespeed', 'TEXT'],
+    ['duration_ms', 'INTEGER'], ['pagespeed', 'TEXT'], ['specialist_diagnostics', 'TEXT'],
   ]) await addColumn('seo_audits', column, type);
   // Phase 3 Step 2: recommendation-level verification. `issue_id` already IS the reliable link to the
   // originating issue (NOT NULL since Phase 2 — see createRecommendation below), so no new linking column is
@@ -151,6 +151,7 @@ export async function createStore({ pool } = {}) {
     ...r, id: Number(r.id), website_id: Number(r.website_id), score: int(r.score),
     pages_crawled: int(r.pages_crawled), pages_planned: int(r.pages_planned), errors_count: int(r.errors_count), duration_ms: int(r.duration_ms),
     pagespeed: r.pagespeed ? JSON.parse(r.pagespeed) : null,
+    specialist_diagnostics: r.specialist_diagnostics ? JSON.parse(r.specialist_diagnostics) : null,
   };
   const seoIssue = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), audit_id: Number(r.audit_id), page_id: r.page_id == null ? null : Number(r.page_id) };
   const pageLink = (r) => r && { ...r, id: Number(r.id), website_id: Number(r.website_id), audit_id: Number(r.audit_id), from_page_id: Number(r.from_page_id), to_page_id: r.to_page_id == null ? null : Number(r.to_page_id), is_internal: !!Number(r.is_internal) };
@@ -360,6 +361,14 @@ export async function createStore({ pool } = {}) {
       await db.run(
         'UPDATE seo_audits SET finished_at=?, score=?, status=?, summary=?, pages_crawled=?, errors_count=?, duration_ms=?, pagespeed=? WHERE id=?',
         [now(), score ?? null, status, summary || null, pagesCrawled ?? null, errorsCount ?? null, durationMs ?? null, pagespeed ? JSON.stringify(pagespeed) : null, id]);
+    },
+    /** Phase 3 Step 4W.2 — observability only. The specialist pipeline's conflicts/skipped/errors diagnostics
+     *  (server/seo/orchestrator.js, server/seo/specialistRecommendationConverter.js) are only known once
+     *  runOnPageSpecialistIntegration() finishes, which happens AFTER finishAudit() has already committed
+     *  this audit as 'complete' (see server/seo/jobs.js) — so this is a second, narrowly-scoped single-column
+     *  write, not a duplicate of finishAudit()'s own fields, and never touches status/score/finished_at. */
+    async setSpecialistDiagnostics(id, diagnostics) {
+      await db.run('UPDATE seo_audits SET specialist_diagnostics = ? WHERE id = ?', [JSON.stringify(diagnostics), id]);
     },
     async getAudit(id) { return audit((await db.all('SELECT * FROM seo_audits WHERE id = ?', [id]))[0]); },
     async latestAudit(websiteId) { return audit((await db.all('SELECT * FROM seo_audits WHERE website_id = ? ORDER BY id DESC LIMIT 1', [websiteId]))[0]); },
