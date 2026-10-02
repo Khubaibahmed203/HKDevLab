@@ -424,6 +424,22 @@ export async function createStore({ pool } = {}) {
       const rows = await db.all(`SELECT * FROM seo_recommendations ${where} ORDER BY id DESC LIMIT ? OFFSET ?`, [...params, limit, offset]);
       return rows.map(recommendation);
     },
+    /** Phase 3 Step 4S — the cross-audit identity for a specialist recommendation's logical target.
+     *  issue_id is audit-local and never stable across audits (a fresh row every scan — see createIssues()
+     *  above), but page_id IS stable for the same (website_id, url) because pages are upserted in place
+     *  (see upsertPage()). (website_id, page_id, type) is therefore the one combination that correctly
+     *  identifies "the same logical recommendation target" whether it was found in this audit or an earlier
+     *  one. `ai_provider = 'specialist-agent'` scopes this strictly to the specialist path — see
+     *  specialistRecommendationConverter.js, which is the only writer of that exact literal; a real LLM
+     *  provider name (e.g. 'anthropic') can never match, so an LLM-sourced recommendation for the same
+     *  page/type is structurally invisible to this lookup and is never read, skipped, or altered by it.
+     *  Returns only the single most recent matching row (if any) — the caller decides what today's status
+     *  (and, if applied, verified_status) implies about creating a new one. */
+    async findLatestSpecialistRecommendation({ websiteId, pageId, type }) {
+      return recommendation((await db.all(
+        "SELECT * FROM seo_recommendations WHERE website_id = ? AND page_id = ? AND type = ? AND ai_provider = 'specialist-agent' ORDER BY id DESC LIMIT 1",
+        [websiteId, pageId, type]))[0]);
+    },
     async setRecommendationStatus(id, status, { reviewedBy, applied } = {}) {
       const at = now();
       await db.run(

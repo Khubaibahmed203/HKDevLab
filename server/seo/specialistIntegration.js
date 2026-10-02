@@ -63,18 +63,40 @@ import { crawlLimits } from './limits.js';
  * small mapping functions below (toPageContext/toIssue) are that adapter, kept local to this file and nowhere
  * else — onPageAgent.js, orchestrator.js, and specialistRecommendationConverter.js are completely unmodified.
  *
- * DUPLICATE PROTECTION: see this module's own final integration report for the full reasoning. In short —
- * the exact (websiteId, auditId, issueId, type) 4-tuple the Step 4K spec names cannot be duplicated: (a) this
- * function only ever runs once per auditId (it is invoked from the same already-claimed, run-once completion
- * path as verifyAppliedRecommendations() in server/seo/jobs.js), (b) convertSpecialistFindings() already
- * refuses to emit two recommendation objects for the same issueId in one call, and (c) a defensive check
- * against store.listRecommendations({issueId}) below refuses to insert again even if this were ever invoked
- * twice for the same issue. No new duplicate-protection mechanism, schema change, or uniqueness redesign was
- * introduced anywhere. Broader cross-audit accumulation (a still-unresolved issue getting one new
- * recommendation row per future re-scan) is a pre-existing characteristic of the whole recommendation system
- * — the existing manual LLM path has exactly the same property today (nothing stops a human from clicking
- * "recommend" again on a freshly re-surfaced issue after a re-scan) — not a new defect this step introduces.
- * This is flagged explicitly rather than silently papered over with invented logic.
+ * DUPLICATE PROTECTION — PHASE 3 STEP 4S (cross-audit): issue_id is audit-local (a fresh seo_issues row
+ * every scan — see server/db.js's createIssues()), so matching on it (the original Step 4K-4P-G mechanism)
+ * only ever caught a duplicate within the SAME audit run; a still-unresolved issue re-detected on a LATER
+ * audit got a brand-new issue_id and therefore a brand-new, unbounded recommendation row every time. The
+ * Step 4R audit identified page_id as the one value that IS stable across audits for the same page (pages
+ * are upserted in place — see upsertPage()), and confirmed this converter (see
+ * specialistRecommendationConverter.js's `if (issue.pageId == null) ... skip('missing-page')`) guarantees
+ * every recommendation it emits today (type 'title' or 'description', the only two converter-supported
+ * types) always carries a real, non-null pageId. So (websiteId, pageId, type) is used below as the stable
+ * cross-audit identity for "the same logical specialist recommendation target" — never issueId, and never
+ * proposedValue (a changed wording for the same target is still the same target, not a new one).
+ *
+ * This identity is deliberately NOT generalized to sitewide (null-pageId) recommendation types — none exist
+ * among the converter's current output, and none is invented here (see shouldSkipDuplicateSpecialistRecommendation()
+ * below, and the Step 4R audit's explicit deferral of the unrelated duplicate-content null-pageId case).
+ *
+ * The lookup (store.findLatestSpecialistRecommendation()) is scoped to ai_provider = 'specialist-agent' only
+ * — the one literal only this converter's output ever carries (server/seo/recommendations.js's LLM path
+ * always sets a real provider name instead, e.g. 'anthropic'). An existing LLM recommendation for the same
+ * page/type is therefore structurally invisible to this check: it is never read, never counted as a
+ * duplicate, never modified, and never deleted by it.
+ *
+ * State policy (shouldSkipDuplicateSpecialistRecommendation()): pending/approved -> skip (a human hasn't
+ * acted, or already approved; don't pile on another ask). applied, unresolved by verification (verified_status
+ * is null/'unknown'/'still-present') -> skip (never an endless duplicate queue while the prior fix is
+ * unconfirmed or didn't hold). applied AND verified resolved -> allow (the issue legitimately returned after
+ * being fixed; a new recommendation is correct, not a duplicate). rejected -> allow (a past rejection of one
+ * specific proposal does not permanently suppress a later, independently re-detected recurrence). No matching
+ * row at all -> allow. Historical recommendation rows are never mutated or deleted by this check — a "new"
+ * recommendation is always a genuinely new INSERT, exactly like every recommendation before this step.
+ *
+ * Verification (verified_status/verified_at/verified_audit_id) remains entirely owned by
+ * verifyAppliedRecommendations() in server/seo/jobs.js, unmodified by this step — this check only READS
+ * verified_status to decide whether to skip; it never writes it.
  */
 
 function toPageContext(row) {
@@ -88,6 +110,24 @@ function toPageContext(row) {
     jsonLdPresent: row.json_ld_present, lastAuditId: row.last_audit_id == null ? null : Number(row.last_audit_id),
     lastCrawledAt: row.last_crawled_at,
   };
+}
+
+/** Phase 3 Step 4S — decides whether an existing specialist recommendation (the latest row matching the
+ *  new recommendation's (websiteId, pageId, type) target, or undefined if none exists) should block
+ *  creating a new one. See the module docstring's "DUPLICATE PROTECTION" section for the full reasoning
+ *  behind each branch. Pure and synchronous — never queries or mutates anything itself. */
+function shouldSkipDuplicateSpecialistRecommendation(existing) {
+  if (!existing) return false;
+  if (existing.status === 'pending' || existing.status === 'approved') return true;
+  if (existing.status === 'applied') {
+    // Only a confirmed 'resolved' verification allows a new recommendation for a legitimate recurrence.
+    // null (not yet verified) and 'unknown' (inconclusive) are both treated the same as 'still-present' —
+    // never confirmed fixed, so never duplicate while that stands.
+    return existing.verified_status !== 'resolved';
+  }
+  // status === 'rejected' (or any other non-blocking status): a past rejection of one specific proposal
+  // does not permanently suppress a later, independently re-detected recurrence of the same logical issue.
+  return false;
 }
 
 function toIssue(row) {
@@ -135,10 +175,11 @@ export async function runOnPageSpecialistIntegration(store, websiteId, auditId) 
     const { recommendations } = convertSpecialistFindings({ auditContext, pages, issues, mergedFindings: merged, conflicts });
 
     for (const rec of recommendations) {
-      // Defensive, reusing the existing read method — refuses to insert a second recommendation for an
-      // issueId that somehow already has one (see the module docstring's Duplicate Protection note).
-      const existing = await store.listRecommendations({ websiteId, issueId: rec.issueId, limit: 1 });
-      if (existing.length) continue;
+      // Step 4S — cross-audit duplicate check by (websiteId, pageId, type), not issueId (see the module
+      // docstring's Duplicate Protection note). rec.pageId is guaranteed non-null for every type this
+      // converter currently supports.
+      const existing = await store.findLatestSpecialistRecommendation({ websiteId, pageId: rec.pageId, type: rec.type });
+      if (shouldSkipDuplicateSpecialistRecommendation(existing)) continue;
       await store.createRecommendation(rec);   // starts 'pending' — identical state machine to every existing recommendation
     }
   } catch (err) {
