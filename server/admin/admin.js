@@ -565,7 +565,35 @@ async function seoOverview(main) {
       h('div', { class: 'panel' }, h('h2', { text: 'Issues' }),
         h('p', {}, h('span', { class: 'pill critical', text: `${counts.critical} critical` }), ' ', h('span', { class: 'pill warning', text: `${counts.warning} warning` }), ' ', h('span', { class: 'pill info', text: `${counts.info} info` })),
         h('p', { class: 'meta', text: `${counts.total} total` }))));
+    main.append(seoDiagnosticsPanel(audit.specialist_diagnostics));
   }
+}
+
+/** Read-only view of seo_audits.specialist_diagnostics (already persisted + API-exposed). null = an audit that
+ *  predates it; anything unexpected in the stored shape is skipped rather than allowed to break the Overview. */
+function seoDiagnosticsPanel(d) {
+  const panel = (...kids) => h('div', { class: 'panel' }, h('h2', { text: 'Specialist diagnostics' }), ...kids);
+  if (d == null) return panel(h('p', { class: 'meta', text: 'No diagnostics recorded for this audit.' }));
+  if (typeof d !== 'object' || Array.isArray(d)) return panel(h('p', { class: 'meta', text: 'Diagnostics for this audit are in an unexpected format.' }));
+
+  const entries = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : []);
+  const str = (v) => (v == null ? '' : String(v));
+  const conflicts = entries(d.conflicts), skipped = entries(d.skipped), errors = entries(d.errors);
+  if (!conflicts.length && !skipped.length && !errors.length) return panel(h('p', { class: 'meta', text: 'No conflicts, skipped findings or errors recorded.' }));
+
+  const section = (title, ...kids) => h('details', { class: 'item' }, h('summary', {}, h('span', { class: 'ttl', text: title })), h('div', { class: 'body' }, ...kids));
+  const pill = (label, n, cls) => h('span', { class: `pill ${n ? cls : ''}`, text: `${label}: ${n}` });
+
+  const byReason = new Map();
+  for (const s of skipped) { const r = str(s.reason) || 'unknown'; byReason.set(r, (byReason.get(r) || 0) + 1); }
+
+  return panel(
+    h('p', {}, pill('Conflicts', conflicts.length, 'warning'), ' ', pill('Skipped', skipped.length, 'info'), ' ', pill('Errors', errors.length, 'bad')),
+    conflicts.length ? section(`Conflicts (${conflicts.length})`, conflicts.map((c) => h('div', {},
+      h('p', { class: 'meta', text: `Issue #${str(c.issueId) || '—'} · ${(Array.isArray(c.agentNames) ? c.agentNames : []).map(str).join(', ')}` }),
+      entries(c.proposals).map((p) => h('p', { class: 'msg', text: `${str(p.agentName)}: ${str(p.proposedType)} → ${str(p.proposedValue)}` }))))) : null,
+    skipped.length ? section(`Skipped (${skipped.length})`, [...byReason].sort((a, b) => b[1] - a[1]).map(([reason, n]) => h('p', { class: 'meta', text: `${reason}: ${n}` }))) : null,
+    errors.length ? section(`Errors (${errors.length})`, errors.map((e) => h('p', { class: 'msg', text: `${str(e.agentName)}: ${str(e.error)}` }))) : null);
 }
 
 /* ── Issues: filterable list, each with an optional "get AI recommendation" action ── */
