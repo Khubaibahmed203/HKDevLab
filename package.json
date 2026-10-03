@@ -19,7 +19,7 @@
     "express": "^5.2.1",
     "gsap": "^3.12.5",
     "lenis": "^1.1.13",
-    "nodemailer": "^10.0.10",
+    "nodemailer": "^10.0.13",
     "pg": "^8.23.0"
   },
   "devDependencies": {
