@@ -384,7 +384,7 @@ async function renderContent(main) {
     main.append(h('p', { class: 'boot', text: 'Loading content…' }));
     const r = await api('GET', '/api/admin/content');
     if (!r.ok) { clear(main); return main.append(h('p', { class: 'empty', text: r.data.error || 'Could not load the content.' })); }
-    draft = r.data.content; saved = JSON.stringify(draft); meta = { updatedAt: r.data.updatedAt, updatedBy: r.data.updatedBy };
+    draft = r.data.content; saved = JSON.stringify(draft); meta = { updatedAt: r.data.updatedAt, updatedBy: r.data.updatedBy, version: r.data.version };
     clear(main);
   }
   const state = h('span', { class: 'state' });
@@ -400,12 +400,13 @@ async function renderContent(main) {
 
   async function save() {
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
-    const r = await api('PUT', '/api/admin/content', { content: draft });
+    // the version says which copy of the content this draft was made from; the server refuses (409) a save from an out-of-date copy
+    const r = await api('PUT', '/api/admin/content', { content: draft, version: meta.version });
     if (r.ok) {
-      draft = r.data.content; saved = JSON.stringify(draft); meta = { updatedAt: r.data.updatedAt, updatedBy: r.data.updatedBy }; errors = [];
+      draft = r.data.content; saved = JSON.stringify(draft); meta = { updatedAt: r.data.updatedAt, updatedBy: r.data.updatedBy, version: r.data.version }; errors = [];
       toast('Saved — the change is live on the site now.');
     } else if (r.data.errors) { errors = r.data.errors; toast('Some fields need attention — see the list below.', true); }
-    else toast(r.data.error || 'Could not save.', true);
+    else toast(r.data.error || (r.status === 409 ? 'The content changed after you opened it, so nothing was saved. Reload this page, then make your changes again.' : 'Could not save.'), true);
     render();
   }
 
@@ -439,7 +440,7 @@ async function showHistory() {
         i > 0 && h('button', { class: 'btn btn--sm', type: 'button', text: 'Restore', onclick: async () => {
           if (!confirm(`Restore the version from ${fmtDate(v.created_at)}? It becomes the live site right away${dirty() ? ' and your unsaved changes will be lost' : ''}.`)) return;
           const res = await api('POST', `/api/admin/content/restore/${v.id}`);
-          if (res.ok) { draft = res.data.content; saved = JSON.stringify(draft); meta = { updatedAt: res.data.updatedAt, updatedBy: res.data.updatedBy }; errors = []; close(); render(); toast('Version restored and live.'); }
+          if (res.ok) { draft = res.data.content; saved = JSON.stringify(draft); meta = { updatedAt: res.data.updatedAt, updatedBy: res.data.updatedBy, version: res.data.version }; errors = []; close(); render(); toast('Version restored and live.'); }
           else toast(res.data.error || 'Could not restore that version.', true);
         } }))))
     : h('p', { class: 'empty', text: 'No history yet.' });

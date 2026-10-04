@@ -42,13 +42,16 @@ export async function createApp() {
   let cache = null;                                // { at, content, meta }
   async function site() {
     if (cache && Date.now() - cache.at < CONTENT_TTL) return cache;
-    const row = await store.getContent();
-    if (!row) {
-      await store.saveContent(DEFAULT_CONTENT, 'system', 'Initial content');
+    let row = await store.getContent();
+    // first start only: create the default document if there is none. Insert-only — it can never replace content that appeared meanwhile.
+    if (!row && await store.seedContentIfAbsent(DEFAULT_CONTENT, 'system', 'Initial content')) {
       cache = { at: Date.now(), content: DEFAULT_CONTENT, meta: {} };
-    } else {
-      cache = { at: Date.now(), content: withDefaults(row.data), meta: { updatedAt: row.updatedAt, updatedBy: row.updatedBy } };
+      return cache;
     }
+    row ||= await store.getContent();                // another server created it first: use that one
+    cache = row
+      ? { at: Date.now(), content: withDefaults(row.data), meta: { updatedAt: row.updatedAt, updatedBy: row.updatedBy } }
+      : { at: Date.now(), content: DEFAULT_CONTENT, meta: {} };
     return cache;
   }
   const remember = (content, updatedAt, updatedBy) => { cache = { at: Date.now(), content, meta: { updatedAt, updatedBy } }; };
@@ -154,17 +157,22 @@ export async function createApp() {
     res.type('text/csv').set('Content-Disposition', 'attachment; filename="hkdevlab-enquiries.csv"').send(csv);
   }));
 
-  // site content (admins and editors) — always read fresh here so an editor never overwrites a newer save with stale data
+  // site content (admins and editors). Every save is a compare-and-swap: the editor sends back the `version` it was given with the
+  // document, and a save made from an out-of-date copy (someone else saved, a version was restored, an SEO fix was applied) is
+  // refused with 409 instead of silently overwriting the newer content. The version is required — there is no way around it.
   admin.get('/content', asyncH(async (req, res) => {
     const row = await store.getContent();
-    res.json({ content: row ? withDefaults(row.data) : DEFAULT_CONTENT, updatedAt: row?.updatedAt, updatedBy: row?.updatedBy });
+    res.json({ content: row ? withDefaults(row.data) : DEFAULT_CONTENT, updatedAt: row?.updatedAt, updatedBy: row?.updatedBy, version: row ? row.version : 0 });
   }));
   admin.put('/content', asyncH(async (req, res) => {
+    const version = req.body?.version;
+    if (!Number.isInteger(version) || version < 0) return res.status(400).json({ ok: false, error: 'This page is out of date — reload it, then save again.' });
     const { errors, value } = sanitizeContent(req.body?.content);
     if (errors) return res.status(400).json({ ok: false, errors });
-    const at = await store.saveContent(value, req.user.email, String(req.body?.note ?? '').slice(0, 120));
-    remember(value, at, req.user.email);
-    res.json({ ok: true, content: value, updatedAt: at, updatedBy: req.user.email });
+    const saved = await store.saveContentIfVersion(value, req.user.email, String(req.body?.note ?? '').slice(0, 120), version);
+    if (!saved.ok) return res.status(409).json({ ok: false, error: 'The site content was changed after you opened it (by another editor, a restored version or an applied SEO fix), so nothing was saved. Reload this page to see the latest content, then make your changes again.' });
+    remember(value, saved.updatedAt, req.user.email);
+    res.json({ ok: true, content: value, updatedAt: saved.updatedAt, updatedBy: req.user.email, version: saved.version });
   }));
   // photo upload (admins and editors): the raw image bytes in the request body. The type is decided from the FILE'S OWN
   // first bytes — never from what the browser claims — and only JPEG / PNG / WebP are accepted (no SVG: it can carry script).
@@ -190,9 +198,14 @@ export async function createApp() {
     if (!old) return res.status(404).json({ ok: false, error: 'Version not found.' });
     const { errors, value } = sanitizeContent(withDefaults(old));
     if (errors) return res.status(422).json({ ok: false, errors });
-    const at = await store.saveContent(value, req.user.email, `Restored version #${req.params.id}`);
-    remember(value, at, req.user.email);
-    res.json({ ok: true, content: value, updatedAt: at, updatedBy: req.user.email });
+    // Restore replaces the whole document on purpose, so the person does not send a version — the server takes the current one itself,
+    // just now. It still goes through the same compare-and-swap, which is what moves the version on and so makes every editor
+    // (and SEO fix) that is holding an older copy get a 409 rather than overwrite the restored content.
+    const row = await store.getContent();
+    const saved = await store.saveContentIfVersion(value, req.user.email, `Restored version #${req.params.id}`, row ? row.version : 0);
+    if (!saved.ok) return res.status(409).json({ ok: false, error: 'The site content changed while this version was being restored, so nothing was changed. Try restoring it again.' });
+    remember(value, saved.updatedAt, req.user.email);
+    res.json({ ok: true, content: value, updatedAt: saved.updatedAt, updatedBy: req.user.email, version: saved.version });
   }));
   app.use('/api/admin', admin);
 

@@ -195,6 +195,8 @@ export function createSeoRouter(store, { limiter }) {
     const result = await applyRecommendation(store, rec, { userEmail: req.user.email });
     if (!result.ok) {
       if (result.error === 'manual implementation required') return res.status(501).json({ ok: false, error: result.error, recommendation: rec });   // status stays 'approved'
+      // the site content moved on after this request read it: nothing was written and the recommendation stays approved, for a person to re-review
+      if (result.conflict) return res.status(409).json({ ok: false, error: result.error, recommendation: rec });
       const failed = await store.transitionRecommendation(rec.id, { from: 'approved', to: 'failed' });
       if (!failed) return lostTransition(res, rec.id, 'Only an approved recommendation can be applied');
       return res.status(422).json({ ok: false, error: result.error, details: result.details });

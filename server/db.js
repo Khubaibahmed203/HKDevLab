@@ -138,6 +138,10 @@ export async function createStore({ pool } = {}) {
   for (const [column, type] of [
     ['verified_status', 'TEXT'], ['verified_at', 'TEXT'], ['verified_audit_id', 'BIGINT'],
   ]) await addColumn('seo_recommendations', column, type);
+  // Phase 4 Hardening #3: the site content row's revision counter (see saveContentIfVersion). Deliberately a plain nullable
+  // INTEGER: rows that predate it are NULL (SQLite, PostgreSQL and pg-mem do not all back-fill a default), and every read
+  // and write below treats NULL as version 0.
+  await addColumn('content', 'version', 'INTEGER');
 
   const enq = (r) => ({ ...r, id: Number(r.id), email_sent: !!Number(r.email_sent) });
   const website = (r) => r && { ...r, id: Number(r.id) };
@@ -164,6 +168,17 @@ export async function createStore({ pool } = {}) {
   const user = (r) => r && {
     id: Number(r.id), email: r.email, name: r.name, role: r.role, created_at: r.created_at, last_login_at: r.last_login_at,
     hasPassword: String(r.password_hash || '').startsWith('scrypt:'), googleLinked: !!r.google_sub,
+  };
+  // site content: the history entry written after a successful content write, and the insert-only creation of the row.
+  const recordContentVersion = async (at, userEmail, note, value) => {
+    await db.insert('INSERT INTO content_versions (created_at,user_email,note,value) VALUES (?,?,?,?)', [at, userEmail, note || null, value]);
+    await db.run(`DELETE FROM content_versions WHERE id NOT IN (SELECT id FROM (SELECT id FROM content_versions ORDER BY id DESC LIMIT ${MAX_VERSIONS}) keep)`);
+  };
+  // Insert-only: if the row already exists the primary key refuses the INSERT (PostgreSQL 23505, SQLite "UNIQUE constraint failed"),
+  // which here only means "someone else has it" — the existing row is never touched. Any other error is a real failure and is thrown.
+  const insertContentIfAbsent = async (value, at, userEmail, version) => {
+    try { await db.run("INSERT INTO content (key,value,updated_at,updated_by,version) VALUES ('site',?,?,?,?)", [value, at, userEmail, version]); return true; }
+    catch (err) { if (err?.code === '23505' || /UNIQUE constraint failed/i.test(String(err?.message))) return false; throw err; }
   };
 
   return {
@@ -256,19 +271,46 @@ export async function createStore({ pool } = {}) {
     async rateCount(key, windowMs) { return Number((await db.all('SELECT COUNT(*) AS n FROM rate_events WHERE k = ? AND ts > ?', [key, Date.now() - windowMs]))[0].n); },
     async rateClear(key) { await db.run('DELETE FROM rate_events WHERE k = ?', [key]); },
 
-    /* site content (+ version history) */
+    /* site content (+ version history). `version` is the row's revision: NULL (a row from before the column existed) reads as 0,
+       and every write moves it up. content_versions is history only — the version on the content row is what guards writes. */
     async getContent() {
-      const r = (await db.all("SELECT value, updated_at, updated_by FROM content WHERE key = 'site'"))[0];
-      return r ? { data: JSON.parse(r.value), updatedAt: r.updated_at, updatedBy: r.updated_by } : null;
+      const r = (await db.all("SELECT value, updated_at, updated_by, version FROM content WHERE key = 'site'"))[0];
+      return r ? { data: JSON.parse(r.value), updatedAt: r.updated_at, updatedBy: r.updated_by, version: r.version == null ? 0 : Number(r.version) } : null;
     },
+    /** Compare-and-swap: replaces the document only while the row is STILL at `expectedVersion` (the version the caller read
+     *  together with the document it edited). Returns { ok: true, version, updatedAt }, or { ok: false, conflict: true } when
+     *  the row has moved on. A conflict changes nothing at all: no content write, no version change, no history row. There is
+     *  deliberately no fallback to an unconditional write here. A missing row counts as version 0, so that the very first
+     *  write may create it — creation is insert-only and can never replace a row that exists. */
+    async saveContentIfVersion(data, userEmail, note, expectedVersion) {
+      if (!Number.isInteger(expectedVersion) || expectedVersion < 0) throw new Error(`Invalid expected content version: ${expectedVersion}`);
+      const value = JSON.stringify(data), at = now(), next = expectedVersion + 1;
+      let written = (await db.run(
+        "UPDATE content SET value = ?, updated_at = ?, updated_by = ?, version = ? WHERE key = 'site' AND COALESCE(version, 0) = ?",
+        [value, at, userEmail, next, expectedVersion])) > 0;
+      if (!written && expectedVersion === 0) written = await insertContentIfAbsent(value, at, userEmail, next);
+      if (!written) return { ok: false, conflict: true };
+      await recordContentVersion(at, userEmail, note, value);
+      return { ok: true, version: next, updatedAt: at };
+    },
+    /** First-start creation of the default document: inserts only when there is no row, so it can never replace content.
+     *  Returns whether it created the row. */
+    async seedContentIfAbsent(data, userEmail, note) {
+      const value = JSON.stringify(data), at = now();
+      if (!(await insertContentIfAbsent(value, at, userEmail, 0))) return false;
+      await recordContentVersion(at, userEmail, note, value);
+      return true;
+    },
+    /** UNCONDITIONAL replace — no production code calls this any more (writes go through saveContentIfVersion, first start
+     *  through seedContentIfAbsent); it remains for test fixtures and one-off tooling. It still advances the version, so a
+     *  writer holding an older snapshot is refused afterwards instead of silently overwriting. */
     async saveContent(data, userEmail, note) {
       const value = JSON.stringify(data), at = now();
-      if ((await db.run("UPDATE content SET value = ?, updated_at = ?, updated_by = ? WHERE key = 'site'", [value, at, userEmail])) === 0) {
-        try { await db.run("INSERT INTO content (key,value,updated_at,updated_by) VALUES ('site',?,?,?)", [value, at, userEmail]); }
-        catch { await db.run("UPDATE content SET value = ?, updated_at = ?, updated_by = ? WHERE key = 'site'", [value, at, userEmail]); }   // lost a race to another server
+      if ((await db.run("UPDATE content SET value = ?, updated_at = ?, updated_by = ?, version = COALESCE(version, 0) + 1 WHERE key = 'site'", [value, at, userEmail])) === 0) {
+        try { await db.run("INSERT INTO content (key,value,updated_at,updated_by,version) VALUES ('site',?,?,?,0)", [value, at, userEmail]); }
+        catch { await db.run("UPDATE content SET value = ?, updated_at = ?, updated_by = ?, version = COALESCE(version, 0) + 1 WHERE key = 'site'", [value, at, userEmail]); }   // lost a race to another server
       }
-      await db.insert('INSERT INTO content_versions (created_at,user_email,note,value) VALUES (?,?,?,?)', [at, userEmail, note || null, value]);
-      await db.run(`DELETE FROM content_versions WHERE id NOT IN (SELECT id FROM (SELECT id FROM content_versions ORDER BY id DESC LIMIT ${MAX_VERSIONS}) keep)`);
+      await recordContentVersion(at, userEmail, note, value);
       return at;
     },
     async listVersions() { return (await db.all('SELECT id, created_at, user_email, note FROM content_versions ORDER BY id DESC LIMIT 40')).map((r) => ({ ...r, id: Number(r.id) })); },

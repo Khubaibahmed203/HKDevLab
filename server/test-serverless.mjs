@@ -71,8 +71,9 @@ ok('…and on server C', r.status === 200 && r.data.content.hero.chips.length ==
 
 /* 4) content edits show up on other copies within seconds (TTL 150 ms in this test) */
 const content = r.data.content;
+const contentVersion = r.data.version;          // saves must carry the content version the document was loaded with
 content.hero.eyebrow = 'Edited on server A';
-r = await owner.req(A.base, 'PUT', '/api/admin/content', { content });
+r = await owner.req(A.base, 'PUT', '/api/admin/content', { content, version: contentVersion });
 ok('content saved on server A', r.status === 200);
 await new Promise((res) => setTimeout(res, 300));
 r = await new Client().req(B.base, 'GET', '/api/content');

@@ -88,23 +88,25 @@ ok('an address that is not lower-case hex → 404', r.status === 404);
 r = await call('GET', '/api/admin/content');
 ok('admin content already contains the founders placeholders', r.status === 200 && r.data.content.founders?.people?.length === 2 && r.data.content.founders.show === true);
 const doc = r.data.content;
+let version = r.data.version;                         // saves must carry the content version the document was loaded with
 doc.founders.people[0].photo = jpgUrl;
 doc.founders.people[0].name = 'Ada Example';
-r = await call('PUT', '/api/admin/content', { json: { content: doc } });
+r = await call('PUT', '/api/admin/content', { json: { content: doc, version } });
 ok('saving content with the uploaded photo works', r.status === 200 && r.data.ok, JSON.stringify(r.data).slice(0, 200));
+version = r.data.version;
 await new Promise((res) => setTimeout(res, 150));
 r = await call('GET', '/api/content', { auth: false });
 ok('the public content now points at the photo', r.data.founders.people[0].photo === jpgUrl && r.data.founders.people[0].name === 'Ada Example');
 doc.founders.people[1].photo = 'https://evil.example/tracker.png';
-r = await call('PUT', '/api/admin/content', { json: { content: doc } });
+r = await call('PUT', '/api/admin/content', { json: { content: doc, version } });
 ok('a photo address that is not our own upload is rejected on save (400)', r.status === 400, String(r.status));
 doc.founders.people[1].photo = '';
 doc.founders.people[1].link = 'javascript:alert(1)';
-r = await call('PUT', '/api/admin/content', { json: { content: doc } });
+r = await call('PUT', '/api/admin/content', { json: { content: doc, version } });
 ok('a javascript: portfolio link is rejected on save (400)', r.status === 400, String(r.status));
 doc.founders.people[1].link = 'https://example.com/portfolio';
 doc.founders.show = false;
-r = await call('PUT', '/api/admin/content', { json: { content: doc } });
+r = await call('PUT', '/api/admin/content', { json: { content: doc, version } });
 ok('the section can be hidden and links are stored', r.status === 200 && r.data.content.founders.show === false && r.data.content.founders.people[1].link === 'https://example.com/portfolio');
 
 /* an older saved document (no founders section) still loads, with the placeholders filled in */
