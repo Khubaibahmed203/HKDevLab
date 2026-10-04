@@ -156,18 +156,31 @@ export function createSeoRouter(store, { limiter }) {
     }) });
   }));
 
+  /** The status check at the top of each handler is only a fast path: another request can change the recommendation
+   *  between that read and the transition. When the guarded transition matches no row, this answers with the same
+   *  409 an up-front mismatch gets, using the status as it is NOW rather than the one this request read earlier. */
+  async function lostTransition(res, id, requirement) {
+    const current = await store.getRecommendation(id);
+    if (!current) return res.status(404).json({ ok: false, error: 'Recommendation not found.' });
+    return res.status(409).json({ ok: false, error: `${requirement} (this one is ${current.status}).` });
+  }
+
   router.post('/recommendations/:id/approve', asyncH(async (req, res) => {
     const rec = await store.getRecommendation(+req.params.id);
     if (!rec) return res.status(404).json({ ok: false, error: 'Recommendation not found.' });
     if (rec.status !== 'pending') return res.status(409).json({ ok: false, error: `Only a pending recommendation can be approved (this one is ${rec.status}).` });
-    res.json({ ok: true, recommendation: await store.setRecommendationStatus(rec.id, 'approved', { reviewedBy: req.user.email }) });
+    const approved = await store.transitionRecommendation(rec.id, { from: 'pending', to: 'approved', reviewedBy: req.user.email });
+    if (!approved) return lostTransition(res, rec.id, 'Only a pending recommendation can be approved');
+    res.json({ ok: true, recommendation: approved });
   }));
 
   router.post('/recommendations/:id/reject', asyncH(async (req, res) => {
     const rec = await store.getRecommendation(+req.params.id);
     if (!rec) return res.status(404).json({ ok: false, error: 'Recommendation not found.' });
     if (rec.status !== 'pending') return res.status(409).json({ ok: false, error: `Only a pending recommendation can be rejected (this one is ${rec.status}).` });
-    res.json({ ok: true, recommendation: await store.setRecommendationStatus(rec.id, 'rejected', { reviewedBy: req.user.email }) });
+    const rejected = await store.transitionRecommendation(rec.id, { from: 'pending', to: 'rejected', reviewedBy: req.user.email });
+    if (!rejected) return lostTransition(res, rec.id, 'Only a pending recommendation can be rejected');
+    res.json({ ok: true, recommendation: rejected });
   }));
 
   // APPLY: the only route that can change production content, and only for an already-approved recommendation.
@@ -182,10 +195,13 @@ export function createSeoRouter(store, { limiter }) {
     const result = await applyRecommendation(store, rec, { userEmail: req.user.email });
     if (!result.ok) {
       if (result.error === 'manual implementation required') return res.status(501).json({ ok: false, error: result.error, recommendation: rec });   // status stays 'approved'
-      await store.setRecommendationStatus(rec.id, 'failed', {});
+      const failed = await store.transitionRecommendation(rec.id, { from: 'approved', to: 'failed' });
+      if (!failed) return lostTransition(res, rec.id, 'Only an approved recommendation can be applied');
       return res.status(422).json({ ok: false, error: result.error, details: result.details });
     }
-    res.json({ ok: true, recommendation: await store.setRecommendationStatus(rec.id, 'applied', { applied: true }) });
+    const applied = await store.transitionRecommendation(rec.id, { from: 'approved', to: 'applied', applied: true });
+    if (!applied) return lostTransition(res, rec.id, 'Only an approved recommendation can be applied');
+    res.json({ ok: true, recommendation: applied });
   }));
 
   return router;

@@ -11,6 +11,8 @@ export const STATUSES = ['new', 'read', 'replied', 'spam'];
 export const ROLES = ['admin', 'editor'];
 const now = () => new Date().toISOString();
 const MAX_VERSIONS = 40;
+// The only recommendation status changes production may make; there is no pending → applied (a person must approve first).
+const RECOMMENDATION_TRANSITIONS = new Set(['pending>approved', 'pending>rejected', 'approved>applied', 'approved>failed']);
 
 /* ───────────── adapters ───────────── */
 async function sqliteAdapter() {
@@ -467,6 +469,19 @@ export async function createStore({ pool } = {}) {
         `UPDATE seo_recommendations SET status = ?${reviewedBy !== undefined ? ', reviewed_at = ?, reviewed_by = ?' : ''}${applied ? ', applied_at = ?' : ''} WHERE id = ?`,
         [status, ...(reviewedBy !== undefined ? [at, reviewedBy] : []), ...(applied ? [at] : []), id]);
       return this.getRecommendation(id);
+    },
+    /** The production status-transition API (setRecommendationStatus above stays the unguarded setter). Only the four
+     *  pairs in RECOMMENDATION_TRANSITIONS are accepted — anything else throws before any SQL runs. The UPDATE also
+     *  requires the row to still be in `from`, so when several requests all read the same status, exactly one changes
+     *  the row (and owns its reviewer and applied-at metadata) and the rest match nothing. Resolves to the updated
+     *  recommendation, or null if the row was no longer in `from` (or doesn't exist). */
+    async transitionRecommendation(id, { from, to, reviewedBy, applied } = {}) {
+      if (!RECOMMENDATION_TRANSITIONS.has(`${from}>${to}`)) throw new Error(`Invalid recommendation transition: ${from} -> ${to}`);
+      const at = now();
+      const changed = await db.run(
+        `UPDATE seo_recommendations SET status = ?${reviewedBy !== undefined ? ', reviewed_at = ?, reviewed_by = ?' : ''}${applied ? ', applied_at = ?' : ''} WHERE id = ? AND status = ?`,
+        [to, ...(reviewedBy !== undefined ? [at, reviewedBy] : []), ...(applied ? [at] : []), id, from]);
+      return changed > 0 ? this.getRecommendation(id) : null;
     },
 
     /* Phase 3 Step 2: recommendation-level verification — read/analysis only, never touches content or
