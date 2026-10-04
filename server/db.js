@@ -357,10 +357,22 @@ export async function createStore({ pool } = {}) {
         [websiteId, at, baseUrl || null, pagesPlanned ?? null, websiteId]);
       return id ? { id, website_id: websiteId, started_at: at, finished_at: null, score: null, status: 'queued', summary: null, base_url: baseUrl || null, pages_planned: pagesPlanned ?? null } : null;
     },
+    /** Terminal transition (complete/failed). Guarded so it can only ever leave a non-terminal state: an audit
+     *  that stale recovery (or anything else) already moved to failed/complete is never overwritten. Resolves to
+     *  true only if THIS call changed the row — false means another process got there first, and the caller must
+     *  not treat its own result as recorded. */
     async finishAudit(id, { score, status, summary, pagesCrawled, errorsCount, durationMs, pagespeed }) {
-      await db.run(
-        'UPDATE seo_audits SET finished_at=?, score=?, status=?, summary=?, pages_crawled=?, errors_count=?, duration_ms=?, pagespeed=? WHERE id=?',
-        [now(), score ?? null, status, summary || null, pagesCrawled ?? null, errorsCount ?? null, durationMs ?? null, pagespeed ? JSON.stringify(pagespeed) : null, id]);
+      return (await db.run(
+        "UPDATE seo_audits SET finished_at=?, score=?, status=?, summary=?, pages_crawled=?, errors_count=?, duration_ms=?, pagespeed=? WHERE id=? AND status IN ('queued','running')",
+        [now(), score ?? null, status, summary || null, pagesCrawled ?? null, errorsCount ?? null, durationMs ?? null, pagespeed ? JSON.stringify(pagespeed) : null, id])) > 0;
+    },
+    /** Stale-audit recovery: one atomic UPDATE that fails this website's queued/running audits whose started_at
+     *  (an ISO string, same format as `cutoff`) is older than `cutoff`. Idempotent — a second call finds nothing.
+     *  Resolves to how many audits it recovered. Never touches pages, issues, links or recommendations. */
+    async failStaleAudits(websiteId, { cutoff, summary }) {
+      return db.run(
+        "UPDATE seo_audits SET status = 'failed', finished_at = ?, summary = ? WHERE website_id = ? AND status IN ('queued','running') AND started_at < ?",
+        [now(), summary, websiteId, cutoff]);
     },
     /** Phase 3 Step 4W.2 — observability only. The specialist pipeline's conflicts/skipped/errors diagnostics
      *  (server/seo/orchestrator.js, server/seo/specialistRecommendationConverter.js) are only known once

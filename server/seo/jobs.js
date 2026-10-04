@@ -1,7 +1,7 @@
 import { crawlWebsite } from './crawler.js';
 import { analyzePages } from './pageAnalyzer.js';
 import { scoreFromIssues } from './analyzers.js';   // Phase 1's pure severity-weighted scorer — unchanged, reused as-is
-import { crawlLimits } from './limits.js';
+import { crawlLimits, staleAuditMs } from './limits.js';
 import { fetchPageSpeed } from './pagespeed.js';
 import { runOnPageSpecialistIntegration } from './specialistIntegration.js';
 
@@ -22,11 +22,28 @@ import { runOnPageSpecialistIntegration } from './specialistIntegration.js';
  *      the job — the first poll after POST /scan does the real work. Once a scan is 'running' or done,
  *      ensureProgressing() is a cheap no-op read.
  */
+export const STALE_AUDIT_SUMMARY = 'Marked failed by stale-audit recovery: this scan never recorded a completion, so it was presumed interrupted (restart, timeout or crash).';
+
+/** An audit stuck 'queued'/'running' (the process died or was killed before finishing it) would otherwise block
+ *  every later scan of its website forever. Fails this website's audits older than the stale threshold in one
+ *  atomic UPDATE. Never throws: if the sweep itself fails, the normal active-audit check still runs unchanged. */
+async function recoverStaleAudits(store, websiteId) {
+  try {
+    const cutoff = new Date(Date.now() - staleAuditMs()).toISOString();
+    const recovered = await store.failStaleAudits(websiteId, { cutoff, summary: STALE_AUDIT_SUMMARY });
+    if (recovered > 0) console.error(`[seo] recovered ${recovered} stale audit(s) for website #${websiteId} (queued/running past the stale threshold)`);
+  } catch (err) {
+    console.error('[seo] stale-audit recovery failed — continuing with the normal active-audit check:', err.message);
+  }
+}
+
 /** Returns the newly queued audit, or null if one was already queued/running for this website — see
  *  createAuditIfNoneActive() in server/db.js, an atomic INSERT…WHERE NOT EXISTS that closes the race a plain
- *  "check, then insert" would have between two near-simultaneous POST /scan requests. */
+ *  "check, then insert" would have between two near-simultaneous POST /scan requests. Stale audits are
+ *  recovered first so a dead one can't be the "already running" scan that blocks a new one. */
 export async function queueScan(store, website, { baseUrl } = {}) {
   const limits = crawlLimits();
+  await recoverStaleAudits(store, website.id);
   const audit = await store.createAuditIfNoneActive(website.id, { baseUrl, pagesPlanned: limits.maxPages });
   if (!audit) return null;
   setImmediate(() => {
@@ -84,10 +101,16 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
     }
 
     const score = scoreFromIssues(issues);
-    await store.finishAudit(auditId, {
+    const finished = await store.finishAudit(auditId, {
       score, status: 'complete', summary: `${crawl.pages.length} page(s) crawled, ${issues.length} issue(s) found.`,
       pagesCrawled: crawl.pages.length, errorsCount: crawl.errors.length, durationMs: Date.now() - startedAt, pagespeed,
     });
+    if (!finished) {
+      // Stale recovery already failed this audit while this worker was still crawling: it no longer owns the
+      // audit, so its result is discarded and none of the post-audit work below may run against it.
+      console.error(`[seo] audit #${auditId} was already recovered as stale before this scan finished — discarding its result and skipping all post-audit work`);
+      return;
+    }
     // The audit is already committed as 'complete' above — nothing past this point can affect that outcome.
     // verifyAppliedRecommendations() never throws (it catches internally); this .catch() is belt-and-suspenders.
     await verifyAppliedRecommendations(store, websiteId, auditId).catch((err) => console.error('[seo] recommendation verification failed:', err.message));
@@ -104,7 +127,8 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
       await store.setSpecialistDiagnostics(auditId, diagnostics).catch((err) => console.error('[seo] persisting specialist diagnostics failed:', err.message));
     }
   } catch (err) {
-    await store.finishAudit(auditId, { score: null, status: 'failed', summary: String(err.message || err), durationMs: Date.now() - startedAt });
+    const recorded = await store.finishAudit(auditId, { score: null, status: 'failed', summary: String(err.message || err), durationMs: Date.now() - startedAt });
+    if (!recorded) console.error(`[seo] audit #${auditId} failed (${String(err.message || err).slice(0, 200)}) but had already been moved out of queued/running — leaving it as it is`);
   }
 }
 
