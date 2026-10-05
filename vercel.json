@@ -9,6 +9,9 @@
     { "source": "/admin/(.*)", "destination": "/api" },
     { "source": "/media/(.*)", "destination": "/api" }
   ],
+  "headers": [
+    { "source": "/assets/projects/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] }
+  ],
   "functions": {
     "api/index.js": {
       "includeFiles": "{server/admin/**,content/**}",
