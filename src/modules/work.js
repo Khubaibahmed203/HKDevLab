@@ -21,16 +21,17 @@ const techOf = (w) => (w.technologies || []).filter(Boolean).join(' · ');
 const hostPath = (u) => { try { const x = new URL(u); return x.host + (x.pathname === '/' && !x.search ? '' : x.pathname) + x.search; } catch { return ''; } };   // project.vercel.app/products
 const lock = '<svg class="mock__lock" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6z"/></svg>';
 const urlBar = (u) => `<div class="mock__bar">${dots}<u>${/^https:/i.test(u) ? lock : ''}<span>${esc(hostPath(u))}</span></u></div>`;
-// DEPRECATED uploaded screenshots: no longer editable. If an older project still has one it is only a poster shown until the live page
-// has loaded, or the stand-in for a site that refuses to be framed. Same-origin images only.
+// DEPRECATED uploaded screenshots: no longer editable, and never shown once the live page's status is known (it is shown live, or
+// it gets the fallback card below). Only a project whose site could not be checked yet may still show its old image, to avoid an empty card.
+// Same-origin images only.
 const shot = (w) => (/^\/(media|work)\/[\w.-]+$/.test(w.preview || '') ? `<img src="${esc(w.preview)}" alt="" width="1440" height="800" loading="lazy" decoding="async">` : '');
-const unavailable = '<div class="mock__off"><b>Live preview unavailable</b><span>This website prevents embedded previews.</span><em>Open live website ↗</em></div>';
+const unavailable = '<div class="mock__off"><b>Live preview unavailable</b><span>This website prevents embedded previews.</span><em>View Live Site ↗</em></div>';
 
 const KIND = {
   // The card is built from the project's Live URL alone (the address in the window, the link, the live page). The live page is only
   // framed when the server's check said the site allows it (data-src); workScene() creates that iframe later, and only for a few cards.
   live: (w) => {
-    const poster = shot(w);
+    const poster = canEmbed(w) || embedBlocked(w) ? '' : shot(w);
     return `${urlBar(liveHref(w))}<div class="mock__shot"${canEmbed(w) ? ` data-src="${esc(liveHref(w))}"` : ''}>${poster || (embedBlocked(w) ? unavailable : `<p class="mock__t">${esc(w.name)}</p>`)}</div>`;
   },
   hero: (w) => `${bar(w.url)}<div class="mock__body">${nav(first(w), w.nav, 'Start')}
@@ -136,7 +137,7 @@ export function workScene() {
     f.tabIndex = -1;
     f.setAttribute('aria-hidden', 'true');
     f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-    f.addEventListener('load', () => f.classList.add('is-ready'));          // fades in over the poster / name card
+    f.addEventListener('load', () => f.classList.add('is-ready'));          // fades in over the name card (never a white flash)
     box.append(f);
     frames[i] = f;
   };
@@ -147,7 +148,7 @@ export function workScene() {
       else if (d > 2 && frames[i]) { frames[i].remove(); frames[i] = null; }
     });
   }
-  const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => { near = es.some((e) => e.isIntersecting); if (near) syncFrames(shown); }, { rootMargin: '500px 0px' }) : null;   // no observer → no live frames, just posters
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => { near = es.some((e) => e.isIntersecting); if (near) syncFrames(shown); }, { rootMargin: '500px 0px' }) : null;   // no observer → no live frames, just the name cards
 
   layout();
   window.addEventListener('resize', layout);
