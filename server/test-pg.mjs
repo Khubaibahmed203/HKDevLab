@@ -193,7 +193,11 @@ const applyRec = async (r) => { await store.setRecommendationStatus(r.id, 'appro
 // off the SAME issue, to prove verification only ever touches an 'applied' recommendation.
 const w4 = await store.ensureWebsite('verify-test.example', 'Verify Test');
 const auditA = await store.createAudit(w4.id, { baseUrl: 'https://verify-test.example' });
-await store.createIssues(w4.id, auditA.id, [{ type: 'missing-title', severity: 'critical', detail: 'no title' }]);
+// Verification only speaks for a page the verifying audit actually observed, so the issue belongs to a real page, and each "next"
+// audit below fetches that page successfully (HTTP 200, text/html) before it is verified against.
+const observePage = (website, url, auditId) => store.upsertPage({ websiteId: website.id, url, finalUrl: url, statusCode: 200, contentType: 'text/html', auditId });
+const pageW4 = await observePage(w4, 'https://verify-test.example/', auditA.id);
+await store.createIssues(w4.id, auditA.id, [{ pageId: pageW4, type: 'missing-title', severity: 'critical', detail: 'no title' }]);
 await store.finishAudit(auditA.id, { score: 70, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
 const issueX = (await store.listIssues({ websiteId: w4.id, auditId: auditA.id }))[0];
 const recApplied = await mkRec(w4.id, issueX.id, issueX.page_id);
@@ -208,7 +212,8 @@ await store.setRecommendationStatus(recFailed.id, 'failed', {});                
 // w5: the issue is still there at the next scan -> still-present.
 const w5 = await store.ensureWebsite('verify-test-2.example', 'Verify Test 2');
 const auditC = await store.createAudit(w5.id, { baseUrl: 'https://verify-test-2.example' });
-await store.createIssues(w5.id, auditC.id, [{ type: 'missing-title', severity: 'critical', detail: 'no title' }]);
+const pageW5 = await observePage(w5, 'https://verify-test-2.example/', auditC.id);
+await store.createIssues(w5.id, auditC.id, [{ pageId: pageW5, type: 'missing-title', severity: 'critical', detail: 'no title' }]);
 await store.finishAudit(auditC.id, { score: 70, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
 const issueY = (await store.listIssues({ websiteId: w5.id, auditId: auditC.id }))[0];
 const recStillPresent = await mkRec(w5.id, issueY.id, issueY.page_id);
@@ -223,9 +228,11 @@ await new Promise((r) => setTimeout(r, 5));   // guarantee each "next" audit's s
 const contentBefore = JSON.stringify(await store.getContent());
 
 const auditB = await store.createAudit(w4.id, { baseUrl: 'https://verify-test.example' });   // no issues this time
+await observePage(w4, 'https://verify-test.example/', auditB.id);
 await store.finishAudit(auditB.id, { score: 100, status: 'complete', summary: 'no issues', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
 const auditD = await store.createAudit(w5.id, { baseUrl: 'https://verify-test-2.example' });
-await store.createIssues(w5.id, auditD.id, [{ type: 'missing-title', severity: 'critical', detail: 'still no title' }]);   // same signature: type + page(null)
+await observePage(w5, 'https://verify-test-2.example/', auditD.id);
+await store.createIssues(w5.id, auditD.id, [{ pageId: pageW5, type: 'missing-title', severity: 'critical', detail: 'still no title' }]);   // same signature: type + page
 await store.finishAudit(auditD.id, { score: 70, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
 const auditE = await store.createAudit(w6.id, { baseUrl: 'https://verify-test-3.example' });
 await store.finishAudit(auditE.id, { score: 100, status: 'complete', summary: 'ok', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });

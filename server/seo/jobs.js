@@ -180,7 +180,25 @@ export async function compareToPreviousAudit(store, websiteId, currentAuditId) {
  * `issue_id` (NOT NULL since Phase 2) is already the reliable link from a recommendation to the issue that
  * produced it — no separate "source issue" column was needed. Issue identity across audits reuses issueKey()
  * above, the exact same signature compareToPreviousAudit() already uses, per the existing convention.
+ *
+ * OBSERVATION REQUIREMENT. An issue being absent from an audit only means "fixed" if that audit actually LOOKED at the
+ * page: the analyzer reports nothing for a page that was never fetched, timed out, answered with an error, was excluded
+ * by robots.txt, was no longer linked, or was cut off by the page limit. So a verdict (resolved / still-present) is only
+ * ever written when the recommendation's target page was fetched successfully, as HTML, BY THIS VERY AUDIT (see
+ * observedByAudit). Otherwise nothing is written at all — no verdict, no verified_audit_id, not even 'unknown' (which is
+ * final) — and the recommendation stays unverified, so a later audit that does observe the page can still verify it.
  */
+
+/** Was `page` fetched successfully, as an HTML page, by audit `auditId`? Uses only what the crawl already records:
+ *  pages.last_audit_id (which audit last crawled it), status_code (null for a failed fetch) and content_type — the same
+ *  "successful HTML page" test the analyzer applies (HTTP 2xx, text/html). A page row that merely exists, belongs to an
+ *  older audit, or recorded an error / non-2xx / non-HTML response does not count. */
+const observedByAudit = (page, websiteId, auditId) => !!page
+  && page.website_id === websiteId
+  && page.last_audit_id === auditId
+  && Number.isInteger(page.status_code) && page.status_code >= 200 && page.status_code < 300
+  && /text\/html/i.test(page.content_type || '');
+
 export async function verifyAppliedRecommendations(store, websiteId, auditId) {
   let candidates, currentIssues, audit;
   try {
@@ -210,6 +228,17 @@ export async function verifyAppliedRecommendations(store, websiteId, auditId) {
         await store.setRecommendationVerification(rec.id, { verifiedStatus: 'unknown', verifiedAuditId: auditId });
         continue;
       }
+
+      // The observation requirement (see above): no verdict unless this audit actually fetched the target page as HTML.
+      // A recommendation without a page, a page that can't be read, or one this audit did not observe successfully is
+      // SKIPPED — a genuine "not yet", not a verdict — and stays eligible for a later audit.
+      let target = null;
+      if (rec.page_id != null) {
+        try { target = await store.getPage(rec.page_id); }
+        catch (err) { console.error(`[seo] could not read the target page of recommendation #${rec.id} — leaving it unverified:`, err.message); }
+      }
+      if (!observedByAudit(target, websiteId, auditId)) continue;
+
       const stillPresent = currentKeys.has(issueKey(issue));
       await store.setRecommendationVerification(rec.id, { verifiedStatus: stillPresent ? 'still-present' : 'resolved', verifiedAuditId: auditId });
     } catch (err) {

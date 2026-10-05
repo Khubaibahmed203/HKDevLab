@@ -165,11 +165,18 @@ const captureErrors = async (fn) => {
   let gate = null;
   const makeGate = () => { let arrive, release; const arrived = new Promise((r) => (arrive = r)); const released = new Promise((r) => (release = r)); return { arrive, release, arrived, released }; };
   const httpServer = createServer(async (req, res) => {
+    // The applied recommendation seeded by seedWebsite() is about /old-page. Verification only speaks for a page the verifying
+    // audit actually observed, so the live site serves that page too (linked from the home page) and the real crawl fetches it.
+    if (req.url === '/old-page') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<html lang="en"><head><title>This Old Page Now Has A Perfectly Sized Title</title><meta name="viewport" content="width=device-width"><meta name="description" content="A perfectly adequate description that comfortably clears the length threshold the analyzer checks for."><link rel="canonical" href="/old-page"></head><body><h1>Old page</h1><p>${'word '.repeat(80)}</p></body></html>`);
+      return;
+    }
     if (req.url !== '/') { res.writeHead(404); res.end(); return; }
     const g = gate;
     if (g) { g.arrive(); await g.released; }   // hold the page response so the crawl is genuinely mid-flight while we recover the audit
     res.writeHead(200, { 'content-type': 'text/html' });
-    res.end(`<html lang="en"><head><title>${longTitle}</title><meta name="viewport" content="width=device-width"><meta name="description" content="A perfectly adequate description that comfortably clears the length threshold the analyzer checks for."><link rel="canonical" href="/"><script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite"}</script></head><body><h1>Hello</h1><p>${'word '.repeat(80)}</p></body></html>`);
+    res.end(`<html lang="en"><head><title>${longTitle}</title><meta name="viewport" content="width=device-width"><meta name="description" content="A perfectly adequate description that comfortably clears the length threshold the analyzer checks for."><link rel="canonical" href="/"><script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite"}</script></head><body><h1>Hello</h1><a href="/old-page">old page</a><p>${'word '.repeat(80)}</p></body></html>`);
   });
   await new Promise((resolve) => httpServer.listen(0, resolve));
   const live = `http://127.0.0.1:${httpServer.address().port}`;
