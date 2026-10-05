@@ -1,5 +1,5 @@
 import { normalizeUrl, sameSite } from './url.js';
-import { fetchWithTimeout, CRAWLER_USER_AGENT } from './http.js';
+import { fetchBounded, htmlMaxBytes, CRAWLER_USER_AGENT } from './http.js';
 import { fetchRobots, isAllowed } from './robots.js';
 import { discoverSitemaps } from './sitemap.js';
 import { extractPage } from './extract.js';
@@ -36,11 +36,13 @@ export async function crawlWebsite(startUrl, { maxPages = 100, maxDepth = 5, req
       continue;
     }
 
+    // One bounded request: the deadline and the HTML size cap cover the headers AND the body, so a page that stalls or
+    // streams without end becomes an ordinary page error below instead of hanging the scan. The body is only read for HTML.
     const t0 = Date.now();
     let res, fetchError = null;
-    try { res = await fetchWithTimeout(url, { timeoutMs: requestTimeoutMs, userAgent }); }
-    catch (err) { fetchError = err.name === 'AbortError' ? `timed out after ${requestTimeoutMs}ms` : (err.message || 'fetch failed'); }
-    const responseTimeMs = Date.now() - t0;
+    try { res = await fetchBounded(url, { timeoutMs: requestTimeoutMs, userAgent, maxBytes: htmlMaxBytes(), readBody: (r) => /text\/html/i.test(r.headers.get('content-type') || '') }); }
+    catch (err) { fetchError = err.code === 'REQUEST_TIMEOUT' ? `timed out after ${requestTimeoutMs}ms` : (err.message || 'fetch failed'); }
+    const responseTimeMs = fetchError ? Date.now() - t0 : res.ttfbMs;   // as before: how long the server took to answer, not how long the body took to arrive
 
     if (fetchError) {
       pages.push({ url, finalUrl: url, depth, statusCode: null, contentType: null, responseTimeMs, htmlSize: 0, error: fetchError });
@@ -52,7 +54,7 @@ export async function crawlWebsite(startUrl, { maxPages = 100, maxDepth = 5, req
     const finalUrl = res.url || url;
     const contentType = res.headers.get('content-type') || '';
     const isHtml = /text\/html/i.test(contentType);
-    const body = isHtml ? await res.text() : '';
+    const body = isHtml ? res.text : '';
     const htmlSize = isHtml ? Buffer.byteLength(body, 'utf8') : Number(res.headers.get('content-length') || 0);
 
     const page = { url, finalUrl, depth, statusCode: res.status, contentType, responseTimeMs, htmlSize, redirected: finalUrl !== url, error: null };

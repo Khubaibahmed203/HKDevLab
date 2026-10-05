@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from './http.js';
+import { fetchBounded, sitemapMaxBytes } from './http.js';
 
 const decodeXmlEntities = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
@@ -36,10 +36,9 @@ export async function discoverSitemaps(origin, robotsSitemaps, { timeoutMs, user
     try { host = new URL(url).host.toLowerCase(); } catch { return { url, error: 'not a valid URL', entries: [] }; }
     if (host !== String(allowedHost).toLowerCase()) return { url, error: 'outside the configured domain — not fetched', entries: [] };
     try {
-      const res = await fetchWithTimeout(url, { timeoutMs, userAgent });
+      const res = await fetchBounded(url, { timeoutMs, userAgent, maxBytes: sitemapMaxBytes(), readBody: (r) => r.ok });
       if (!res.ok) return { url, error: `HTTP ${res.status}`, entries: [] };
-      const xml = await res.text();
-      const { isIndex, entries } = parseSitemapXml(xml);
+      const { isIndex, entries } = parseSitemapXml(res.text);
       return { url, isIndex, entries, error: null };
     } catch (err) {
       return { url, error: err.message || 'fetch failed', entries: [] };

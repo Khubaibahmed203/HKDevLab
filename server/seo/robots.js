@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from './http.js';
+import { fetchBounded, robotsMaxBytes } from './http.js';
 
 /**
  * A safe, practical subset of robots.txt — not a full search-engine-grade implementation. Only the
@@ -45,10 +45,9 @@ export function isAllowed(pathname, robots) {
 export async function fetchRobots(origin, { timeoutMs, userAgent } = {}) {
   const url = `${origin}/robots.txt`;
   try {
-    const res = await fetchWithTimeout(url, { timeoutMs, userAgent });
+    const res = await fetchBounded(url, { timeoutMs, userAgent, maxBytes: robotsMaxBytes(), readBody: (r) => r.ok });
     if (!res.ok) return { url, exists: false, groups: [], sitemaps: [] };
-    const text = await res.text();
-    return { url, exists: true, ...parseRobots(text) };
+    return { url, exists: true, ...parseRobots(res.text) };
   } catch {
     return { url, exists: false, groups: [], sitemaps: [] };
   }
