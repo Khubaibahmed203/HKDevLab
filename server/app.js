@@ -56,7 +56,7 @@ export async function createApp() {
   /* ───────────── security headers ───────────── */
   app.use((req, res, next) => {
     res.set({
-      'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:",
+      'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:",
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
@@ -222,7 +222,8 @@ export async function createApp() {
   if (hasDist) {
     let indexCache = null;                         // { stamp, html }
     const renderIndex = ({ content, meta }) => {
-      if (indexCache && indexCache.stamp === meta.updatedAt) return indexCache.html;
+      const stamp = meta.updatedAt;                  // changes whenever the content is saved
+      if (indexCache && indexCache.stamp === stamp) return indexCache.html;
       const safeJson = JSON.stringify(publicContent(content)).replace(/</g, `${String.fromCharCode(92)}u003c`);   // can't break out of the <script>
       const html = readFileSync(resolve(dist, 'index.html'), 'utf8')
         .replace('<!--SITE_CONTENT-->', `<script type="application/json" id="site-content">${safeJson}</script>`)
@@ -230,14 +231,17 @@ export async function createApp() {
         .replace(/(<meta name="description" content=")[^"]*(")/, (m, a, b) => `${a}${esc(content.seo.description)}${b}`)
         .replace(/(<meta property="og:title" content=")[^"]*(")/, (m, a, b) => `${a}${esc(content.seo.title)}${b}`)
         .replace(/(<meta property="og:description" content=")[^"]*(")/, (m, a, b) => `${a}${esc(content.seo.description)}${b}`);
-      indexCache = { stamp: meta.updatedAt, html };
+      indexCache = { stamp, html };
       return html;
     };
     app.use(express.static(dist, {
       index: false,
-      setHeaders: (res, file) => res.set('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'),
+      setHeaders: (res, file) => res.set('Cache-Control', /[\\/]assets[\\/](?!projects[\\/])/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'),
     }));
-    app.get('/', asyncH(async (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(renderIndex(await site()))));
+    app.get('/', asyncH(async (req, res) => {
+      const s = await site();
+      res.set('Cache-Control', 'no-cache').type('html').send(renderIndex(s));
+    }));
   }
   app.use((req, res) => res.status(404).type('text').send('Not found'));
   app.use((err, req, res, next) => {                              // bad JSON, oversize body…

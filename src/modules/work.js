@@ -17,12 +17,17 @@ const webUrl = (s) => (/^https?:\/\/[^\s"'<>]+$/i.test(s || '') ? s : '');   // 
 const liveHref = (w) => webUrl(w.liveUrl);          // the project's real landing page — always the admin-saved address, never hardcoded here
 const gitHref = (w) => webUrl(w.githubUrl);
 const techOf = (w) => (w.technologies || []).filter(Boolean).join(' · ');
-const hostOf = (u) => { try { return new URL(u).host; } catch { return ''; } };
-const shot = (w) => (/^\/(media|work)\/[\w.-]+$/.test(w.preview || '') ? `<img src="${esc(w.preview)}" alt="" width="1440" height="800" loading="lazy" decoding="async">` : '');   // same-origin screenshots only
+const hostPath = (u) => { try { const x = new URL(u); return x.host + (x.pathname === '/' && !x.search ? '' : x.pathname) + x.search; } catch { return ''; } };   // project.vercel.app/products
+const lock = '<svg class="mock__lock" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6z"/></svg>';
+const urlBar = (u) => `<div class="mock__bar">${dots}<u>${/^https:/i.test(u) ? lock : ''}<span>${esc(hostPath(u))}</span></u></div>`;
+// The project's landing page as it looks today: a screenshot taken from its Live URL by `npm run capture-project-previews` and shipped as a
+// static file (the server works out its address — see previewPath). Same-origin only. It loads once the section is near (workScene) and,
+// if the file is missing, is dropped so the project's name card behind it shows instead.
+const shot = (w) => (/^\/assets\/projects\/[\w-]+\.webp$/.test(w.preview || '') ? `<img data-src="${esc(w.preview)}" alt="" width="1440" height="900" decoding="async">` : '');
 
 const KIND = {
-  // the address in the little window is the project's own Live URL (so there is a single place to change it)
-  live: (w) => `${bar(hostOf(liveHref(w)))}<div class="mock__shot">${shot(w) || `<p class="mock__t">${esc(w.name)}</p>`}</div>`,
+  // The card is the project's real landing page in a browser window: the address bar shows its Live URL, the viewport its screenshot.
+  live: (w) => `${urlBar(liveHref(w))}<div class="mock__shot"><p class="mock__t">${esc(w.name)}</p>${shot(w)}</div>`,
   hero: (w) => `${bar(w.url)}<div class="mock__body">${nav(first(w), w.nav, 'Start')}
     <div><p class="mock__t">${br(w.title)}</p><p class="mock__s">${esc(w.sub)}</p>${w.cta ? `<span class="mock__btn">${esc(w.cta)}</span>` : ''}</div>
     <div class="mock__art"><span class="ring2"></span><span class="orb"></span><span class="sq"></span><span class="sq"></span></div></div>`,
@@ -109,8 +114,16 @@ export function workScene() {
     }
   }
 
+  /* Screenshots. Seven images would be wasted on a visitor who never scrolls this far, so they load when the section is near the screen
+     (or straight away when the browser has no IntersectionObserver). A missing file is dropped, leaving the name card behind it. */
+  const imgs = $$('.mock__shot img[data-src]', inner);
+  const load = () => imgs.forEach((img) => { if (img.dataset.src) { img.src = img.dataset.src; img.removeAttribute('data-src'); } });
+  imgs.forEach((img) => img.addEventListener('error', () => img.remove()));
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { load(); io.disconnect(); } }, { rootMargin: '600px 0px' }) : null;
+
   layout();
   window.addEventListener('resize', layout);
+  if (io) io.observe($('#work')); else load();
 
   gsap.to(state, {
     rot: -step * (n - 1), ease: 'none',
@@ -118,5 +131,5 @@ export function workScene() {
     scrollTrigger: { trigger: '#work', start: 'top top', end: 'bottom bottom', scrub: 0.7 },     // stage is CSS-sticky (sections.css)
   });
 
-  return () => window.removeEventListener('resize', layout);
+  return () => { window.removeEventListener('resize', layout); if (io) io.disconnect(); };
 }

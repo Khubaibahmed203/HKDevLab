@@ -1,4 +1,4 @@
-import { SCHEMA, isWebUrl } from '/admin/schema.js';
+import { SCHEMA, normalizeWebUrl, previewPath } from '/admin/schema.js';
 
 /* HK DevLab admin portal — dependency-free. All user data is inserted with textContent / properties,
    never as HTML, and every state-changing request carries the X-Requested-With header the server requires. */
@@ -231,12 +231,17 @@ function field(f, obj, touch, regroup) {
       const i = h('input', { id, type: 'text', value: obj[f.k] ?? '', maxLength: f.max || 200, autocomplete: 'off', oninput: () => { obj[f.k] = i.value; touch(); } });
       return wrapFld(f, id, i);
     }
-    case 'url': {                                   // same rule as the server (isWebUrl); the server still has the last word
+    case 'url': {                                   // same rule as the server (normalizeWebUrl); the server still has the last word
       const msg = h('small', { class: 'err' });
-      const check = () => { const v = i.value.trim(); msg.textContent = v && !isWebUrl(v) ? 'Enter a full web address, e.g. https://example.com/' : ''; };
-      const i = h('input', { id, type: 'text', inputMode: 'url', placeholder: 'https://', value: obj[f.k] ?? '', maxLength: f.max || 300, autocomplete: 'off', oninput: () => { obj[f.k] = i.value; check(); touch(); } });
+      const check = () => { const v = i.value.trim(); msg.textContent = v && !normalizeWebUrl(v) ? 'Enter a full web address, e.g. https://example.com/' : ''; };
+      const i = h('input', {
+        id, type: 'text', inputMode: 'url', placeholder: 'https://example-project.vercel.app/', value: obj[f.k] ?? '', maxLength: f.max || 300, autocomplete: 'off',
+        oninput: () => { obj[f.k] = i.value; check(); touch(); pane && pane.changed(); },
+        onchange: () => { const n = normalizeWebUrl(i.value); if (n && n !== i.value) { i.value = n; obj[f.k] = n; touch(); } check(); },   // "example.com" → "https://example.com/"
+      });
+      const pane = f.livePreview ? previewPane(() => normalizeWebUrl(i.value), () => obj.name) : null;
       check();
-      return h('div', { class: 'fld' }, h('label', { for: id, text: f.label }), i, msg, f.help && h('small', { class: 'help', text: f.help }));
+      return h('div', { class: 'fld' }, h('label', { for: id, text: f.label }), i, msg, pane && pane.el, f.help && h('small', { class: 'help', text: f.help }));
     }
     case 'area': case 'lines': {
       const count = h('div', { class: 'count' });
@@ -267,6 +272,38 @@ function field(f, obj, touch, regroup) {
     case 'objlist': return objlistField(f, obj, touch);
     default: return h('div');
   }
+}
+
+/* ───────────── preview of a project's landing page, in a browser-style frame ───────────── */
+// The Live URL is the only input. The picture is the screenshot that `npm run capture-project-previews` saved for that address
+// (its file name is worked out from the address — previewPath in the schema), exactly what the website's card shows. No page is loaded,
+// nothing is fetched from the project's site. Until the screenshot exists (a new or changed address) the pane says how to make it.
+const hostPath = (u) => { try { const x = new URL(u); return x.host + (x.pathname === '/' && !x.search ? '' : x.pathname) + x.search; } catch { return ''; } };   // project.vercel.app/products
+function lockIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'pv__lock'); svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path'); path.setAttribute('d', 'M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6z'); svg.append(path);
+  return svg;
+}
+function previewPane(getUrl, getName) {
+  const addr = h('span', { class: 'pv__addr' });
+  const open = h('a', { class: 'pv__open', target: '_blank', rel: 'noopener noreferrer', title: 'Open the live website in a new tab', 'aria-label': 'Open the live website in a new tab', text: '↗', hidden: true });
+  const view = h('div', { class: 'pv__view' });
+  const el = h('div', { class: 'pvw' }, h('div', { class: 'pv' }, h('div', { class: 'pv__bar' }, h('i'), h('i'), h('i'), h('span', { class: 'pv__pill' }, lockIcon(), addr), open), view));
+  let seq = 0, timer = 0;
+
+  const message = (title, text) => view.replaceChildren(h('div', { class: 'pv__msg' }, h('b', { text: title }), text && h('span', { text })));
+  function run() {
+    const url = getUrl(), src = url && previewPath(url), mine = ++seq;
+    addr.textContent = url ? hostPath(url) : ''; open.hidden = !url; if (url) open.href = url;
+    if (!src) return message('Landing-page preview', 'Enter the Live Website URL above and a screenshot of its landing page appears here.');
+    const img = h('img', { alt: `${getName() || 'Project'} — landing page`, width: 1440, height: 900, decoding: 'async' });
+    img.addEventListener('load', () => { if (mine === seq) view.replaceChildren(img); });
+    img.addEventListener('error', () => { if (mine === seq) message('No screenshot of this page yet', 'Run "npm run capture-project-previews", commit the new picture in public/assets/projects/ and deploy — until then the card shows the project name.'); });
+    img.src = src;
+  }
+  run();
+  return { el, changed: () => { clearTimeout(timer); timer = setTimeout(run, 400); } };       // follows the address as it is typed
 }
 
 /* ───────────── photo field: choose → shrink in the browser → upload → preview ───────────── */

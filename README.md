@@ -66,6 +66,38 @@ permanent address and is cached for a year. The upload endpoint (`POST /api/admi
 Origin, is rate-limited, accepts only JPEG / PNG / WebP decided from the file's own first bytes (never SVG), and refuses files over 1.5 MB.
 Content can only point at `/media/<id>` addresses, never at outside image URLs. On Vercel `vercel.json` routes `/media/*` to the same function.
 
+## Selected Concepts: a screenshot of the real landing page
+
+In **Admin → Site content → Selected Concepts** a live project needs its **Live website URL** (plus name, category, description, technologies).
+Its card on the website is a browser window whose address bar shows that URL and whose viewport is a **screenshot of that page's real landing
+page**, with "View live →" linking to it. No iframe is ever used, nothing is uploaded, and nothing is captured in the visitor's browser.
+
+```bash
+npm run capture-project-previews                                  # the projects in content/default.json
+npm run capture-project-previews -- --from https://www.hkdevlab.com   # the projects published on the live site (the ones managed in /admin)
+npm run capture-project-previews -- --only portfolio              # just the projects whose name or address contains "portfolio"
+```
+
+For each live project the script opens its Live URL in your installed Chrome / Edge (headless, 1440 × 900; set `CHROME_PATH` to use another),
+waits for fonts, images and videos and for the opening animation to settle, captures the viewport — never the browser window — and saves it as
+WebP: `public/assets/projects/<address>-preview.webp` (about 40–120 KB). It prints `✓` / `✗` for every project and exits with 1 if any failed.
+A page that is unreachable, answers with an error, shows an access / bot-protection wall or looks blank **keeps its previous screenshot** and is
+reported; nothing is bypassed. Then commit the new picture and deploy — the site just serves static files.
+
+- **The file name comes from the address** (`previewPath` in `content/schema.js`: `https://its4u.vercel.app/` → `its4u-vercel-app-preview.webp`), so
+  the website, the admin and the script always agree and a project stores nothing but its URL. The server adds it to each live project as `preview`
+  in what visitors receive (and `content/default.json` is kept in step by the script).
+- **A new or changed URL has no screenshot until you run the script.** The admin form says so ("No screenshot of this page yet…"), and until then
+  the card shows the project's name inside the same browser window.
+- **Performance:** the pictures load only when the Work section comes near the screen; `/assets/projects/*` is not cached as immutable, so a
+  re-captured screenshot reaches visitors (see `vercel.json`).
+- **Check it:**  runs the script against small local pages (a good one, a blank one, a bot-wall, HTTP errors, a dead domain)
+  and verifies each is captured or reported and that a previous screenshot is never overwritten.
+- **Check it:** `node scripts/test-capture-previews.mjs` runs the script against small local pages (a good one, a blank one, a bot-wall, HTTP
+  errors, a dead domain) and verifies each is captured or reported, and that a previous screenshot is never overwritten.
+- **Sample (drawn) layouts** — landing page, dashboard, chat, shop — are still available for concepts that have no live site; they have no URL, so
+  they have no screenshot.
+
 ## How a contact message travels
 
 ```

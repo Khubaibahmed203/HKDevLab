@@ -14,13 +14,14 @@
  *   numlist  list of numbers 0–100         obj      nested group (`fields`)
  *   objlist  repeatable group (`fields`)
  * Modifiers: max, min (length), maxItems, minItems, optional, when: { field: [values] }, itemLabel,
- *            default (bool), noun / wide (image: wording and a landscape thumbnail)
+ *            default (bool), noun / wide (image: wording and a landscape thumbnail),
+ *            livePreview (url: the admin shows the saved screenshot of that page in a browser frame under the field)
  * A field with `when` is only required (and only checked) while its condition holds, so a field that is not `optional`
  * but has `when: { kind: ['live'] }` is required for live projects only.
  */
 export const ICONS = ['monitor', 'dashboard', 'cpu', 'code', 'zap', 'devices', 'heart', 'shield', 'rocket', 'globe', 'chat', 'chart', 'lock', 'star', 'users', 'layers'];
 export const KINDS = [
-  { value: 'live', label: 'Live project (screenshot of its landing page + link)' },   // first = what a new project starts as
+  { value: 'live', label: 'Live project (a screenshot of its real landing page)' },   // first = what a new project starts as
   { value: 'hero', label: 'Sample · landing page (drawn mockup)' },
   { value: 'dash', label: 'Sample · dashboard (drawn mockup)' },
   { value: 'chat', label: 'Sample · chat / assistant (drawn mockup)' },
@@ -36,6 +37,35 @@ export function isWebUrl(s) {
     const u = new URL(s);
     return /^https?:$/.test(u.protocol) && u.hostname.includes('.') && !u.username && !u.password;
   } catch { return false; }
+}
+
+/**
+ * What gets saved for an address typed in the admin: trimmed, "example.com/x" → "https://example.com/x", host lower-cased,
+ * default port and #fragment dropped, always a full href. Returns '' when it is not an acceptable web address
+ * (so `javascript:`, `data:`, relative paths, hosts without a dot and addresses with a login are all refused).
+ */
+export function normalizeWebUrl(s) {
+  let t = String(s ?? '').trim();
+  if (!t) return '';
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(t) && /^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[:/?#]|$)/i.test(t)) t = `https://${t}`;   // typed without https://
+  if (!isWebUrl(t)) return '';
+  const u = new URL(t);
+  u.hash = '';
+  return u.href;
+}
+
+/**
+ * Where the screenshot of a project's landing page lives, worked out from its Live URL alone — so the website, the admin and the capture
+ * script (`npm run capture-project-previews`) always agree, and a project needs nothing stored but its address.
+ *   https://khubaib-portfolio-brown.vercel.app/  →  /assets/projects/khubaib-portfolio-brown-vercel-app-preview.webp
+ */
+export function previewPath(liveUrl) {
+  try {
+    const u = new URL(liveUrl);
+    const slug = (u.host.replace(/^www\./, '') + (u.pathname === '/' ? '' : u.pathname)).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const name = slug.slice(0, 80).replace(/-+$/, '');
+    return name ? `/assets/projects/${name}-preview.webp` : '';
+  } catch { return ''; }
 }
 
 const text = (k, label, o = {}) => ({ k, label, type: 'text', max: 120, ...o });
@@ -124,9 +154,8 @@ export const SCHEMA = [
         { k: 'kind', label: 'Layout', type: 'select', options: KINDS },
         area('description', 'Short description', { max: 180, when: LIVE, help: 'One or two sentences about the project.' }),
         list('technologies', 'Technologies', { max: 24, maxItems: 8, when: LIVE, help: 'Up to 8, e.g. React, Node.js, PostgreSQL.' }),
-        weburl('liveUrl', 'Live website URL', { when: LIVE, help: 'The full address, e.g. https://example-project.vercel.app/. "View live", the project and its name all open it in a new tab.' }),
+        weburl('liveUrl', 'Live website URL', { when: LIVE, livePreview: true, help: 'The full address, e.g. https://example-project.vercel.app/. The card shows a screenshot of this page (generated with "npm run capture-project-previews" — there is nothing to upload). "View live", the card and its name open it in a new tab.' }),
         weburl('githubUrl', 'GitHub URL (optional)', { optional: true, when: LIVE, help: 'Shown as a small "GitHub" link next to "View live". Leave empty to hide it.' }),
-        { k: 'preview', label: 'Landing-page screenshot', type: 'image', noun: 'screenshot', wide: true, optional: true, when: LIVE, help: 'A screenshot of the project\'s landing page (landscape, about 16:9), shown inside the browser window. Without one the card shows the project name.' },
         text('url', 'Web address shown in the window', { max: 60, when: { kind: MOCKS } }),
         { k: 'a', label: 'Colour 1', type: 'color', when: { kind: MOCKS } },
         { k: 'b', label: 'Colour 2', type: 'color', when: { kind: MOCKS } },
