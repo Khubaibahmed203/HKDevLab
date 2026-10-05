@@ -83,15 +83,10 @@
   "work": {
     "eyebrow": "03 — Work",
     "title": "Selected concepts",
-    "note": "Sample concepts showing the kind of work we build. Real case studies are on the way.",
+    "note": "Live landing pages — click a project to open it in a new tab.",
     "items": [
-      { "name": "Aura Coffee", "meta": "Website · Online ordering", "url": "auracoffee.co", "kind": "hero", "a": "#ffb547", "b": "#ff7a1a", "title": "Coffee, delivered\nat its best.", "sub": "Small-batch roasts, ordered in seconds.", "cta": "Order now", "nav": ["Menu", "Story", "Visit"], "kpis": [], "bars": [], "chat": [] },
-      { "name": "LedgerLite", "meta": "Web app · Finance dashboard", "url": "app.ledgerlite.io", "kind": "dash", "a": "#12a6ff", "b": "#0b74ff", "title": "", "sub": "", "cta": "", "nav": [], "kpis": [{ "label": "Revenue", "value": "$48.2k" }, { "label": "Invoices", "value": "126" }, { "label": "Growth", "value": "+18%" }], "bars": [38, 54, 46, 68, 60, 82, 74, 92], "chat": [] },
-      { "name": "Nova Assistant", "meta": "AI · Customer-support chatbot", "url": "nova.support", "kind": "chat", "a": "#9d8bff", "b": "#5b3bff", "title": "", "sub": "", "cta": "", "nav": [], "kpis": [], "bars": [], "chat": [{ "text": "Where is my order?", "mine": true }, { "text": "Order #4821 ships today — tracking sent to your email.", "mine": false }, { "text": "Can I change the address?", "mine": true }] },
-      { "name": "Bloom Florals", "meta": "Website · E-commerce store", "url": "bloomflorals.shop", "kind": "shop", "a": "#ff6fae", "b": "#c21f73", "title": "Fresh blooms,\nsame-day.", "sub": "", "cta": "", "nav": ["Shop", "Weddings", "Cart"], "kpis": [], "bars": [], "chat": [] },
-      { "name": "Peak Fitness", "meta": "Web app · Booking platform", "url": "peakfit.club", "kind": "hero", "a": "#5be37d", "b": "#17a34a", "title": "Book. Train.\nRepeat.", "sub": "Classes, coaches and memberships in one place.", "cta": "Book a class", "nav": ["Classes", "Coaches", "Join"], "kpis": [], "bars": [], "chat": [] },
-      { "name": "FleetPulse", "meta": "Custom software · Logistics", "url": "fleetpulse.app", "kind": "dash", "a": "#22d3c5", "b": "#0e8f7e", "title": "", "sub": "", "cta": "", "nav": [], "kpis": [{ "label": "Vehicles", "value": "84" }, { "label": "On time", "value": "97%" }, { "label": "Alerts", "value": "3" }], "bars": [60, 48, 72, 58, 80, 66, 88, 70], "chat": [] },
-      { "name": "Studio Mira", "meta": "Website · Personal brand", "url": "studiomira.com", "kind": "hero", "a": "#1de4ff", "b": "#0b74ff", "title": "Design with\nintention.", "sub": "Brand and product design for bold founders.", "cta": "View work", "nav": ["Work", "About", "Contact"], "kpis": [], "bars": [], "chat": [] }
+      { "name": "ITS4U", "meta": "Website · Tech retail", "url": "its4u.vercel.app", "kind": "live", "preview": "/work/its4u.webp", "liveUrl": "https://its4u.vercel.app/" },
+      { "name": "Khubaib Ahmed", "meta": "Website · Developer portfolio", "url": "khubaib-portfolio-brown.vercel.app", "kind": "live", "preview": "/work/portfolio.webp", "liveUrl": "https://khubaib-portfolio-brown.vercel.app/" }
     ]
   },
   "who": {
