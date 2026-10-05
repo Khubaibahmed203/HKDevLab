@@ -264,10 +264,19 @@
       </div>
 
       <div class="work__cap" id="workCap" aria-live="polite">
-        <span class="work__idx"><b id="workIdx">01</b> / <span id="workTot">02</span></span>
-        <h3 id="workName"><a id="workNameLink" target="_blank" rel="noopener noreferrer">—</a></h3>
-        <p id="workMeta">—</p>
-        <a class="btn btn--ghost btn--sm work__live" id="workLive" target="_blank" rel="noopener noreferrer" hidden>View live <span aria-hidden="true">→</span></a>
+        <div class="work__id">
+          <span class="work__idx"><b id="workIdx">01</b> / <span id="workTot">02</span></span>
+          <h3 id="workName"><a id="workNameLink" target="_blank" rel="noopener noreferrer">—</a></h3>
+          <p id="workMeta">—</p>
+        </div>
+        <div class="work__more">
+          <p class="work__desc" id="workDesc" hidden></p>
+          <p class="work__tech" id="workTech" hidden></p>
+          <div class="work__acts">
+            <a class="btn btn--ghost btn--sm work__live" id="workLive" target="_blank" rel="noopener noreferrer" hidden>View live <span aria-hidden="true">→</span></a>
+            <a class="work__git" id="workGit" target="_blank" rel="noopener noreferrer" hidden>GitHub ↗</a>
+          </div>
+        </div>
       </div>
       <p class="work__hint" aria-hidden="true">Scroll<br>Explore<br>Interact</p>
     </div>

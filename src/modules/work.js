@@ -13,11 +13,16 @@ const dots = '<i></i><i></i><i></i>';
 const bar = (url) => `<div class="mock__bar">${dots}<u>${esc(url)}</u></div>`;
 const nav = (name, items, cta) => `<div class="mock__nav"><b>${esc(name)}</b>${(items || []).map((i) => `<span>${esc(i)}</span>`).join('')}<em>${esc(cta)}</em></div>`;
 const first = (w) => String(w.name).split(' ')[0];
-const liveHref = (w) => (/^https?:\/\/[^\s"'<>]+$/i.test(w.liveUrl || '') ? w.liveUrl : '');   // the project's real landing page (new tab)
+const webUrl = (s) => (/^https?:\/\/[^\s"'<>]+$/i.test(s || '') ? s : '');   // only real web addresses ever become a link
+const liveHref = (w) => webUrl(w.liveUrl);          // the project's real landing page — always the admin-saved address, never hardcoded here
+const gitHref = (w) => webUrl(w.githubUrl);
+const techOf = (w) => (w.technologies || []).filter(Boolean).join(' · ');
+const hostOf = (u) => { try { return new URL(u).host; } catch { return ''; } };
 const shot = (w) => (/^\/(media|work)\/[\w.-]+$/.test(w.preview || '') ? `<img src="${esc(w.preview)}" alt="" width="1440" height="800" loading="lazy" decoding="async">` : '');   // same-origin screenshots only
 
 const KIND = {
-  live: (w) => `${bar(w.url)}<div class="mock__shot">${shot(w)}</div>`,
+  // the address in the little window is the project's own Live URL (so there is a single place to change it)
+  live: (w) => `${bar(hostOf(liveHref(w)))}<div class="mock__shot">${shot(w) || `<p class="mock__t">${esc(w.name)}</p>`}</div>`,
   hero: (w) => `${bar(w.url)}<div class="mock__body">${nav(first(w), w.nav, 'Start')}
     <div><p class="mock__t">${br(w.title)}</p><p class="mock__s">${esc(w.sub)}</p>${w.cta ? `<span class="mock__btn">${esc(w.cta)}</span>` : ''}</div>
     <div class="mock__art"><span class="ring2"></span><span class="orb"></span><span class="sq"></span><span class="sq"></span></div></div>`,
@@ -39,13 +44,14 @@ function sizeUnits() { if (!HAS_CQ) $$('.slide').forEach((s) => s.style.setPrope
 export function buildWork(items) {
   WORK = items;
   const list = $('#ringInner');
+  $('#work').hidden = !WORK.length;                     // every concept is a draft / not featured / deleted → no empty section
   list.innerHTML = WORK.map((w, i) => {
-    const href = liveHref(w);
+    const href = liveHref(w), git = gitHref(w), tech = techOf(w);
     const mock = `<div class="mock mock--${KIND[w.kind] ? w.kind : 'hero'}" style="--a:${color(w.a, '#12a6ff')};--b:${color(w.b, '#0b74ff')}" aria-hidden="true">${(KIND[w.kind] || KIND.hero)(w)}</div>`;
-    const cap = `<div class="slide__cap"><h3>${esc(w.name)}</h3><p>${esc(w.meta)}</p>${href ? '<span class="btn btn--ghost btn--sm">View live <span aria-hidden="true">→</span></span>' : ''}</div>`;
+    const cap = `<div class="slide__cap"><span class="work__idx"><b>${String(i + 1).padStart(2, '0')}</b></span><h3>${esc(w.name)}</h3><p>${esc(w.meta)}</p>${w.description ? `<p class="slide__desc">${esc(w.description)}</p>` : ''}${tech ? `<p class="slide__tech">${esc(tech)}</p>` : ''}${href ? '<span class="btn btn--ghost btn--sm">View live <span aria-hidden="true">→</span></span>' : ''}</div>`;
     return `<li class="slide" data-i="${i}">${href
       ? `<a class="slide__link" href="${esc(href)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(w.name)} — view live site (opens in a new tab)">${mock}${cap}</a>`
-      : mock + cap}</li>`;
+      : mock + cap}${git ? `<a class="slide__git" href="${esc(git)}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>` : ''}</li>`;
   }).join('');
   $('#workTot').textContent = String(WORK.length).padStart(2, '0');
   sizeUnits();
@@ -60,6 +66,7 @@ export function workScene() {
   const inner = $('#ringInner');
   const slides = $$('.slide', inner);
   const n = slides.length;
+  if (!n) return () => {};                               // nothing to show (section is hidden)
   const slots = Math.max(n, 6);          // a cylinder needs ≥ 3 faces — with only a few projects, space them as on a 6-card ring so they keep their depth
   const step = 360 / slots;
   let R = 900;
@@ -90,12 +97,15 @@ export function workScene() {
       shown = front;
       const w = WORK[front];
       $('#workIdx').textContent = String(front + 1).padStart(2, '0');
-      gsap.fromTo('#workName, #workMeta, #workLive', { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.06, ease: 'expo.out', overwrite: true });
-      const href = liveHref(w);
-      for (const a of $$('#workNameLink, #workLive')) { if (href) a.href = href; else a.removeAttribute('href'); }
+      gsap.fromTo('#workName, #workMeta, #workDesc, #workTech, #workLive, #workGit', { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.06, ease: 'expo.out', overwrite: true });
+      const href = liveHref(w), git = gitHref(w), tech = techOf(w);
+      for (const [a, to] of [[$('#workNameLink'), href], [$('#workLive'), href], [$('#workGit'), git]]) { if (to) a.href = to; else a.removeAttribute('href'); }
       $('#workNameLink').textContent = w.name;
       $('#workMeta').textContent = w.meta;
-      $('#workLive').hidden = !href;
+      $('#workDesc').textContent = w.description || '';
+      $('#workTech').textContent = tech;
+      $('#workDesc').hidden = !w.description; $('#workTech').hidden = !tech;
+      $('#workLive').hidden = !href; $('#workGit').hidden = !git;
     }
   }
 
