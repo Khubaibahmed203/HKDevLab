@@ -10,6 +10,7 @@ import { createAuth } from './auth.js';
 import { createGoogle } from './google.js';
 import { createLimiter } from './limits.js';
 import { DEFAULT_CONTENT, sanitizeContent, withDefaults } from './content.js';
+import { publicContent } from '../content/visibility.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(root, 'dist');
@@ -88,7 +89,8 @@ export async function createApp() {
     try { await store.ping(); res.json({ ok: true, db: store.kind, mail: mailer.live ? 'smtp' : 'console (SMTP not configured)' }); }
     catch { res.status(503).json({ ok: false }); }
   });
-  app.get('/api/content', asyncH(async (req, res) => res.set('Cache-Control', 'no-cache').json((await site()).content)));
+  // what visitors get: drafts and un-featured concepts are removed here, on the server, so they never reach the browser
+  app.get('/api/content', asyncH(async (req, res) => res.set('Cache-Control', 'no-cache').json(publicContent((await site()).content))));
 
   /* ───────────── contact form ───────────── */
   app.post('/api/contact', express.json({ limit: '20kb' }), asyncH(async (req, res) => {
@@ -221,7 +223,7 @@ export async function createApp() {
     let indexCache = null;                         // { stamp, html }
     const renderIndex = ({ content, meta }) => {
       if (indexCache && indexCache.stamp === meta.updatedAt) return indexCache.html;
-      const safeJson = JSON.stringify(content).replace(/</g, `${String.fromCharCode(92)}u003c`);   // can't break out of the <script>
+      const safeJson = JSON.stringify(publicContent(content)).replace(/</g, `${String.fromCharCode(92)}u003c`);   // can't break out of the <script>
       const html = readFileSync(resolve(dist, 'index.html'), 'utf8')
         .replace('<!--SITE_CONTENT-->', `<script type="application/json" id="site-content">${safeJson}</script>`)
         .replace(/<title>[\s\S]*?<\/title>/, () => `<title>${esc(content.seo.title)}</title>`)

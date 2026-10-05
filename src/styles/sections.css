@@ -295,7 +295,33 @@
 .slide__cap .btn { margin-top: 14px; }
 .is-cinema .slide__link { height: 100%; }
 .work__cap h3 a { color: inherit; text-decoration: none; transition: color .3s; } .work__cap h3 a:hover { color: var(--cyan); }
-.work__live { margin-top: 18px; } .work__live[hidden] { display: none; }
+.work[hidden] { display: none; }
+/* what each concept says about itself: description, technologies, and the links (all come from the admin) */
+.work__more { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 10px; }
+.work__cap .work__desc { margin: 0; font: 400 .92rem/1.5 var(--f-body); letter-spacing: 0; color: rgba(255, 255, 255, .74); max-width: 44ch; }
+.work__cap .work__tech { margin: 0; font: 500 .72rem/1.5 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--cyan); }
+.work__acts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; margin-top: 6px; }
+/* wide screens: the title block stays where it always was (under the card, left) and the description, technologies and buttons
+   sit beside it — stacked in one column they would climb up over the card */
+@media (min-width: 900px) and (min-height: 561px) {
+  .is-cinema .work__pin .work__cap { display: flex; align-items: flex-end; gap: 0 56px; max-width: calc(100vw - var(--gutter) * 2 - 180px); bottom: 5vh; }
+  .is-cinema .work__id { flex: 0 0 auto; max-width: min(420px, 40vw); }
+  .is-cinema .work__more { flex: 0 1 440px; min-width: 0; margin-top: 0; padding-bottom: 2px; }
+}
+.work__git, .slide__git { font: 500 .8rem/1 var(--f-mono); letter-spacing: .06em; color: var(--muted); text-decoration: none; padding: 12px 0; transition: color .3s; } .work__git:hover, .slide__git:hover { color: var(--cyan); }
+.work__live[hidden], .work__desc[hidden], .work__tech[hidden], .work__git[hidden] { display: none !important; }
+.slide__cap .work__idx { display: block; margin-bottom: 8px; }
+.slide__cap .slide__desc { font: 400 .92rem/1.55 var(--f-body); color: rgba(255, 255, 255, .74); }
+.slide__cap .slide__tech { color: var(--cyan); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+.slide__git { display: inline-block; margin: 2px 4px 0; }
+.is-cinema .slide__git { display: none; }              /* in the 3D ring the GitHub link lives in the caption below */
+@media (max-width: 899px) {                            /* phones & tablets: keep the caption clear of the card */
+  .is-cinema .work__cap .work__desc { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: none; }
+  .is-cinema .work__cap .work__tech { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .work__acts { margin-top: 14px; }
+}
+@media (max-width: 899px) and (max-height: 700px) { .is-cinema .work__cap .work__desc { display: none; } }
+.is-short .work__cap .work__desc, .is-short .work__cap .work__tech, .is-short .work__git { display: none; }   /* phones held sideways: no room — name, category and the button stay */
 
 .is-cinema .work { padding: 0; height: calc(100vh + var(--len, 7) * 60vh); height: calc(100svh + var(--len, 7) * 60svh); }
 .is-cinema .work__pin { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; }

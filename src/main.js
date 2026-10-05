@@ -19,6 +19,7 @@ import { motionPlan, initMotionUI } from './modules/motion.js';
 import { isWeakDevice, watchPerformance } from './modules/perf.js';
 import { applyContent } from './render.js';
 import defaults from '../content/default.json';
+import { isShown } from '../content/visibility.js';
 
 gsap.registerPlugin(ScrollTrigger);
 ScrollTrigger.config({ ignoreMobileResize: true });   // a phone's address bar sliding in/out must not rebuild the scenes
@@ -69,7 +70,7 @@ async function start() {
   initChrome({ lenis, reduce: !plan.on });
   initMotionUI(plan);
 
-  buildWork(content.work.items);
+  buildWork(content.work.items.filter(isShown));      // the server already drops drafts; this also covers the offline fallback
   initContact(content.contact);
 
   /* The cinema runs on EVERY screen: desktops, laptops, tablets and phones. Only the composition changes

@@ -85,8 +85,8 @@
     "title": "Selected concepts",
     "note": "Live landing pages — click a project to open it in a new tab.",
     "items": [
-      { "name": "ITS4U", "meta": "Website · Tech retail", "url": "its4u.vercel.app", "kind": "live", "preview": "/work/its4u.webp", "liveUrl": "https://its4u.vercel.app/" },
-      { "name": "Khubaib Ahmed", "meta": "Website · Developer portfolio", "url": "khubaib-portfolio-brown.vercel.app", "kind": "live", "preview": "/work/portfolio.webp", "liveUrl": "https://khubaib-portfolio-brown.vercel.app/" }
+      { "name": "ITS4U", "meta": "Website · Tech retail", "featured": true, "published": true, "kind": "live", "description": "A cinematic storefront for Apple devices and mobile accessories, with a working cart and checkout demo.", "technologies": ["React", "Vite", "GSAP"], "liveUrl": "https://its4u.vercel.app/", "githubUrl": "", "preview": "/work/its4u.webp" },
+      { "name": "Khubaib Ahmed", "meta": "Website · Developer portfolio", "featured": true, "published": true, "kind": "live", "description": "A scroll-driven portfolio whose hero video follows the cursor — web, app and AI automation work.", "technologies": ["HTML", "CSS", "JavaScript", "GSAP"], "liveUrl": "https://khubaib-portfolio-brown.vercel.app/", "githubUrl": "", "preview": "/work/portfolio.webp" }
     ]
   },
   "who": {

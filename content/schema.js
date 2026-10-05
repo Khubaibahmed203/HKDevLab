@@ -8,21 +8,35 @@
  *   text     one line                      lines    a few short lines (\n allowed) — headings
  *   area     paragraph(s)                  href     "#anchor", /path, https://… or mailto:…
  *   select   one of `options`              color    #rrggbb
- *   bool     checkbox                      list     list of one-line strings
+ *   bool     checkbox (`default` when missing)   list   list of one-line strings
  *   image    photo uploaded in the admin (stored as /media/<id>)
+ *   url      a web address: http(s) only, a real host (see isWebUrl)
  *   numlist  list of numbers 0–100         obj      nested group (`fields`)
  *   objlist  repeatable group (`fields`)
- * Modifiers: max, min (length), maxItems, minItems, optional, when: { field: [values] }, itemLabel
+ * Modifiers: max, min (length), maxItems, minItems, optional, when: { field: [values] }, itemLabel,
+ *            default (bool), noun / wide (image: wording and a landscape thumbnail)
+ * A field with `when` is only required (and only checked) while its condition holds, so a field that is not `optional`
+ * but has `when: { kind: ['live'] }` is required for live projects only.
  */
 export const ICONS = ['monitor', 'dashboard', 'cpu', 'code', 'zap', 'devices', 'heart', 'shield', 'rocket', 'globe', 'chat', 'chart', 'lock', 'star', 'users', 'layers'];
 export const KINDS = [
-  { value: 'hero', label: 'Landing page (headline + button)' },
-  { value: 'dash', label: 'Dashboard (numbers + chart)' },
-  { value: 'chat', label: 'Chat / assistant' },
-  { value: 'shop', label: 'Online shop' },
-  { value: 'live', label: 'Live site (screenshot of its landing page + link)' },
+  { value: 'live', label: 'Live project (screenshot of its landing page + link)' },   // first = what a new project starts as
+  { value: 'hero', label: 'Sample · landing page (drawn mockup)' },
+  { value: 'dash', label: 'Sample · dashboard (drawn mockup)' },
+  { value: 'chat', label: 'Sample · chat / assistant (drawn mockup)' },
+  { value: 'shop', label: 'Sample · online shop (drawn mockup)' },
 ];
-const MOCKS = ['hero', 'dash', 'chat', 'shop'];   // the drawn layouts — they use the two colours below
+const LIVE = { kind: ['live'] };
+const MOCKS = ['hero', 'dash', 'chat', 'shop'];   // the drawn sample layouts — they use the two colours and the window address below
+
+/** An address a visitor may be sent to: http(s) only, a real host, no embedded login, no spaces. Used by the server and the admin form. */
+export function isWebUrl(s) {
+  if (typeof s !== 'string' || /\s/.test(s)) return false;
+  try {
+    const u = new URL(s);
+    return /^https?:$/.test(u.protocol) && u.hostname.includes('.') && !u.username && !u.password;
+  } catch { return false; }
+}
 
 const text = (k, label, o = {}) => ({ k, label, type: 'text', max: 120, ...o });
 const lines = (k, label, o = {}) => ({ k, label, type: 'lines', max: 120, help: 'Press Enter for a new line.', ...o });
@@ -31,6 +45,7 @@ const list = (k, label, o = {}) => ({ k, label, type: 'list', max: 80, ...o });
 const obj = (k, label, fields, o = {}) => ({ k, label, type: 'obj', fields, ...o });
 const objlist = (k, label, fields, o = {}) => ({ k, label, type: 'objlist', fields, ...o });
 const href = (k, label, o = {}) => ({ k, label, type: 'href', max: 300, ...o });
+const weburl = (k, label, o = {}) => ({ k, label, type: 'url', max: 300, ...o });
 
 const link = (k, label) => obj(k, label, [text('label', 'Button text', { max: 40 }), href('href', 'Goes to', { help: 'Use #contact, #work… for sections on this page, or a full https:// address.' })]);
 const icon = () => ({ k: 'icon', label: 'Icon', type: 'select', options: ICONS });
@@ -95,19 +110,24 @@ export const SCHEMA = [
     ],
   },
   {
-    key: 'work', label: 'Work (projects)',
-    hint: 'Each project is drawn as a browser window. Pick "Live site" to show a screenshot of a real project and link to it; the other layouts are drawn sample concepts.',
+    key: 'work', label: 'Selected Concepts (projects)',
+    hint: 'Each project is a browser window on the website. Their order here is the order on the site — use the arrows. A project shows on the site only while it is Featured and Published; untick either to keep it here without showing it. Everything goes live when you click "Save changes".',
     fields: [
       text('eyebrow', 'Section label', { max: 50 }),
       text('title', 'Headline', { max: 60 }),
       area('note', 'Note under the headline', { max: 200, optional: true }),
       objlist('items', 'Projects', [
         text('name', 'Project name', { max: 40 }),
-        text('meta', 'Type / tagline', { max: 70 }),
-        text('url', 'Web address shown in the window', { max: 60 }),
+        text('meta', 'Category', { max: 70, help: 'Shown under the name, e.g. "Website · Online shop".' }),
+        { k: 'featured', label: 'Featured — show in Selected Concepts', type: 'bool', default: true },
+        { k: 'published', label: 'Published — untick to keep it as a draft (hidden from visitors)', type: 'bool', default: true },
         { k: 'kind', label: 'Layout', type: 'select', options: KINDS },
-        { k: 'preview', label: 'Landing-page screenshot', type: 'image', optional: true, when: { kind: ['live'] }, help: 'A screenshot of the project\'s landing page (landscape, about 16:9). It is shown inside the browser window.' },
-        href('liveUrl', 'Live site address', { optional: true, when: { kind: ['live'] }, help: 'The full https:// address. Clicking the project, its name or "View live" opens it in a new tab.' }),
+        area('description', 'Short description', { max: 180, when: LIVE, help: 'One or two sentences about the project.' }),
+        list('technologies', 'Technologies', { max: 24, maxItems: 8, when: LIVE, help: 'Up to 8, e.g. React, Node.js, PostgreSQL.' }),
+        weburl('liveUrl', 'Live website URL', { when: LIVE, help: 'The full address, e.g. https://example-project.vercel.app/. "View live", the project and its name all open it in a new tab.' }),
+        weburl('githubUrl', 'GitHub URL (optional)', { optional: true, when: LIVE, help: 'Shown as a small "GitHub" link next to "View live". Leave empty to hide it.' }),
+        { k: 'preview', label: 'Landing-page screenshot', type: 'image', noun: 'screenshot', wide: true, optional: true, when: LIVE, help: 'A screenshot of the project\'s landing page (landscape, about 16:9), shown inside the browser window. Without one the card shows the project name.' },
+        text('url', 'Web address shown in the window', { max: 60, when: { kind: MOCKS } }),
         { k: 'a', label: 'Colour 1', type: 'color', when: { kind: MOCKS } },
         { k: 'b', label: 'Colour 2', type: 'color', when: { kind: MOCKS } },
         lines('title', 'Headline', { when: { kind: ['hero', 'shop'] } }),
@@ -117,7 +137,7 @@ export const SCHEMA = [
         objlist('kpis', 'Number cards (up to 3)', [text('label', 'Label', { max: 20 }), text('value', 'Value', { max: 12 })], { maxItems: 3, optional: true, when: { kind: ['dash'] } }),
         { k: 'bars', label: 'Chart bars (numbers 0–100)', type: 'numlist', maxItems: 12, optional: true, when: { kind: ['dash'] } },
         objlist('chat', 'Chat messages (up to 4)', [text('text', 'Message', { max: 90 }), { k: 'mine', label: 'From the customer', type: 'bool' }], { maxItems: 4, optional: true, when: { kind: ['chat'] } }),
-      ], { minItems: 1, maxItems: 12, itemLabel: 'name' }),
+      ], { maxItems: 24, itemLabel: 'name' }),
     ],
   },
   {
