@@ -13,8 +13,11 @@ const dots = '<i></i><i></i><i></i>';
 const bar = (url) => `<div class="mock__bar">${dots}<u>${esc(url)}</u></div>`;
 const nav = (name, items, cta) => `<div class="mock__nav"><b>${esc(name)}</b>${(items || []).map((i) => `<span>${esc(i)}</span>`).join('')}<em>${esc(cta)}</em></div>`;
 const first = (w) => String(w.name).split(' ')[0];
+const liveHref = (w) => (/^https?:\/\/[^\s"'<>]+$/i.test(w.liveUrl || '') ? w.liveUrl : '');   // the project's real landing page (new tab)
+const shot = (w) => (/^\/(media|work)\/[\w.-]+$/.test(w.preview || '') ? `<img src="${esc(w.preview)}" alt="" width="1440" height="800" loading="lazy" decoding="async">` : '');   // same-origin screenshots only
 
 const KIND = {
+  live: (w) => `${bar(w.url)}<div class="mock__shot">${shot(w)}</div>`,
   hero: (w) => `${bar(w.url)}<div class="mock__body">${nav(first(w), w.nav, 'Start')}
     <div><p class="mock__t">${br(w.title)}</p><p class="mock__s">${esc(w.sub)}</p>${w.cta ? `<span class="mock__btn">${esc(w.cta)}</span>` : ''}</div>
     <div class="mock__art"><span class="ring2"></span><span class="orb"></span><span class="sq"></span><span class="sq"></span></div></div>`,
@@ -36,11 +39,14 @@ function sizeUnits() { if (!HAS_CQ) $$('.slide').forEach((s) => s.style.setPrope
 export function buildWork(items) {
   WORK = items;
   const list = $('#ringInner');
-  list.innerHTML = WORK.map((w, i) => `
-    <li class="slide" data-i="${i}">
-      <div class="mock mock--${KIND[w.kind] ? w.kind : 'hero'}" style="--a:${color(w.a, '#12a6ff')};--b:${color(w.b, '#0b74ff')}" aria-hidden="true">${(KIND[w.kind] || KIND.hero)(w)}</div>
-      <div class="slide__cap"><h3>${esc(w.name)}</h3><p>${esc(w.meta)}</p></div>
-    </li>`).join('');
+  list.innerHTML = WORK.map((w, i) => {
+    const href = liveHref(w);
+    const mock = `<div class="mock mock--${KIND[w.kind] ? w.kind : 'hero'}" style="--a:${color(w.a, '#12a6ff')};--b:${color(w.b, '#0b74ff')}" aria-hidden="true">${(KIND[w.kind] || KIND.hero)(w)}</div>`;
+    const cap = `<div class="slide__cap"><h3>${esc(w.name)}</h3><p>${esc(w.meta)}</p>${href ? '<span class="btn btn--ghost btn--sm">View live <span aria-hidden="true">→</span></span>' : ''}</div>`;
+    return `<li class="slide" data-i="${i}">${href
+      ? `<a class="slide__link" href="${esc(href)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(w.name)} — view live site (opens in a new tab)">${mock}${cap}</a>`
+      : mock + cap}</li>`;
+  }).join('');
   $('#workTot').textContent = String(WORK.length).padStart(2, '0');
   sizeUnits();
   if (!HAS_CQ) window.addEventListener('resize', sizeUnits);
@@ -54,7 +60,8 @@ export function workScene() {
   const inner = $('#ringInner');
   const slides = $$('.slide', inner);
   const n = slides.length;
-  const step = 360 / n;
+  const slots = Math.max(n, 6);          // a cylinder needs ≥ 3 faces — with only a few projects, space them as on a 6-card ring so they keep their depth
+  const step = 360 / slots;
   let R = 900;
 
   slides.forEach((s, i) => s.style.setProperty('--i', i));
@@ -63,7 +70,7 @@ export function workScene() {
 
   const layout = () => {
     sizeUnits();
-    R = (inner.offsetWidth / 2) / Math.tan(Math.PI / n) * 1.14;
+    R = (inner.offsetWidth / 2) / Math.tan(Math.PI / slots) * 1.14;
     inner.style.setProperty('--R', `${R}px`);
     render(state.rot);
   };
@@ -83,9 +90,12 @@ export function workScene() {
       shown = front;
       const w = WORK[front];
       $('#workIdx').textContent = String(front + 1).padStart(2, '0');
-      gsap.fromTo('#workName, #workMeta', { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.06, ease: 'expo.out', overwrite: true });
-      $('#workName').textContent = w.name;
+      gsap.fromTo('#workName, #workMeta, #workLive', { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.06, ease: 'expo.out', overwrite: true });
+      const href = liveHref(w);
+      for (const a of $$('#workNameLink, #workLive')) { if (href) a.href = href; else a.removeAttribute('href'); }
+      $('#workNameLink').textContent = w.name;
       $('#workMeta').textContent = w.meta;
+      $('#workLive').hidden = !href;
     }
   }
 

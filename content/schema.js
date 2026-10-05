@@ -20,7 +20,9 @@ export const KINDS = [
   { value: 'dash', label: 'Dashboard (numbers + chart)' },
   { value: 'chat', label: 'Chat / assistant' },
   { value: 'shop', label: 'Online shop' },
+  { value: 'live', label: 'Live site (screenshot of its landing page + link)' },
 ];
+const MOCKS = ['hero', 'dash', 'chat', 'shop'];   // the drawn layouts — they use the two colours below
 
 const text = (k, label, o = {}) => ({ k, label, type: 'text', max: 120, ...o });
 const lines = (k, label, o = {}) => ({ k, label, type: 'lines', max: 120, help: 'Press Enter for a new line.', ...o });
@@ -94,18 +96,20 @@ export const SCHEMA = [
   },
   {
     key: 'work', label: 'Work (projects)',
-    hint: 'Each project is drawn as a browser window. Choose a layout, then fill in what it shows.',
+    hint: 'Each project is drawn as a browser window. Pick "Live site" to show a screenshot of a real project and link to it; the other layouts are drawn sample concepts.',
     fields: [
       text('eyebrow', 'Section label', { max: 50 }),
       text('title', 'Headline', { max: 60 }),
       area('note', 'Note under the headline', { max: 200, optional: true }),
-      objlist('items', 'Projects (at least 4)', [
+      objlist('items', 'Projects', [
         text('name', 'Project name', { max: 40 }),
         text('meta', 'Type / tagline', { max: 70 }),
         text('url', 'Web address shown in the window', { max: 60 }),
         { k: 'kind', label: 'Layout', type: 'select', options: KINDS },
-        { k: 'a', label: 'Colour 1', type: 'color' },
-        { k: 'b', label: 'Colour 2', type: 'color' },
+        { k: 'preview', label: 'Landing-page screenshot', type: 'image', optional: true, when: { kind: ['live'] }, help: 'A screenshot of the project\'s landing page (landscape, about 16:9). It is shown inside the browser window.' },
+        href('liveUrl', 'Live site address', { optional: true, when: { kind: ['live'] }, help: 'The full https:// address. Clicking the project, its name or "View live" opens it in a new tab.' }),
+        { k: 'a', label: 'Colour 1', type: 'color', when: { kind: MOCKS } },
+        { k: 'b', label: 'Colour 2', type: 'color', when: { kind: MOCKS } },
         lines('title', 'Headline', { when: { kind: ['hero', 'shop'] } }),
         text('sub', 'Sub-text', { max: 90, optional: true, when: { kind: ['hero'] } }),
         text('cta', 'Button text', { max: 30, optional: true, when: { kind: ['hero'] } }),
@@ -113,7 +117,7 @@ export const SCHEMA = [
         objlist('kpis', 'Number cards (up to 3)', [text('label', 'Label', { max: 20 }), text('value', 'Value', { max: 12 })], { maxItems: 3, optional: true, when: { kind: ['dash'] } }),
         { k: 'bars', label: 'Chart bars (numbers 0–100)', type: 'numlist', maxItems: 12, optional: true, when: { kind: ['dash'] } },
         objlist('chat', 'Chat messages (up to 4)', [text('text', 'Message', { max: 90 }), { k: 'mine', label: 'From the customer', type: 'bool' }], { maxItems: 4, optional: true, when: { kind: ['chat'] } }),
-      ], { minItems: 4, maxItems: 12, itemLabel: 'name' }),
+      ], { minItems: 1, maxItems: 12, itemLabel: 'name' }),
     ],
   },
   {

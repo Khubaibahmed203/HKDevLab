@@ -9,7 +9,7 @@ export const DEFAULT_CONTENT = JSON.parse(readFileSync(resolve(root, 'content/de
 const CTRL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const HREF = /^(#[\w-]*|\/[^\s]*|https?:\/\/[^\s"'<>]+|mailto:[^\s"'<>]+)$/i;
 const COLOR = /^#[0-9a-f]{6}$/i;
-export const MEDIA_URL = /^\/media\/[a-f0-9]{32}$/;          // the only image address content may hold: a photo uploaded through the admin
+export const MEDIA_URL = /^(\/media\/[a-f0-9]{32}|\/work\/[\w-]+\.(webp|png|jpe?g|avif))$/;   // the only image addresses content may hold: a photo uploaded through the admin, or a project screenshot shipped in public/work/
 
 const oneLine = (v) => (typeof v === 'string' ? v : '').replace(CTRL, '').replace(/[\r\n\t]+/g, ' ').trim();
 const multiLine = (v) => (typeof v === 'string' ? v : '').replace(/\r\n?/g, '\n').replace(CTRL, '').trim();
