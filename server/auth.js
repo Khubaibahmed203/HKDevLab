@@ -101,13 +101,18 @@ export function createAuth(store, { isProd, originAllowed, hashIp, limiter }) {
   // First account ever → admin. Closed permanently once any user exists.
   router.post('/setup', asyncH(async (req, res) => {
     const ip = `setup:${hashIp(req.ip)}`;
-    if (await limiter.blocked(ip, 8, WIN)) return res.status(429).json({ ok: false, error: 'Too many attempts. Try again later.' });
-    if ((await store.userCount()) > 0) return res.status(403).json({ ok: false, error: 'Setup has already been completed. Please sign in.' });
-    const need = process.env.SETUP_TOKEN;
-    if (need) {
-      const given = Buffer.from(String(req.body?.token ?? '')), want = Buffer.from(need);
-      if (given.length !== want.length || !timingSafeEqual(given, want)) { await limiter.fail(ip); return res.status(403).json({ ok: false, errors: { token: 'That setup key is not correct.' } }); }
-    }
+    // The slot is claimed atomically up front (concurrent guesses cannot all pass a pre-check) and stays recorded only for a wrong setup key; every other outcome gives it back.
+    const slot = await limiter.reserve(ip, 8, WIN);
+    if (!slot) return res.status(429).json({ ok: false, error: 'Too many attempts. Try again later.' });
+    let wrongKey = false;
+    try {
+      if ((await store.userCount()) > 0) return res.status(403).json({ ok: false, error: 'Setup has already been completed. Please sign in.' });
+      const need = process.env.SETUP_TOKEN;
+      if (need) {
+        const given = Buffer.from(String(req.body?.token ?? '')), want = Buffer.from(need);
+        if (given.length !== want.length || !timingSafeEqual(given, want)) { wrongKey = true; return res.status(403).json({ ok: false, errors: { token: 'That setup key is not correct.' } }); }
+      }
+    } finally { if (!wrongKey) await limiter.release(slot); }
     const errors = validateAccount(req.body || {});
     if (Object.keys(errors).length) return res.status(400).json({ ok: false, errors });
 
@@ -122,11 +127,19 @@ export function createAuth(store, { isProd, originAllowed, hashIp, limiter }) {
   router.post('/login', asyncH(async (req, res) => {
     const email = cleanEmail(req.body?.email), pw = String(req.body?.password ?? '');
     const ipK = `ip:${hashIp(req.ip)}`, emK = `em:${hashIp(email)}`;
-    if ((await limiter.blocked(ipK, 10, WIN)) || (await limiter.blocked(emK, 5, WIN))) return res.status(429).json({ ok: false, error: 'Too many failed attempts. Please wait 15 minutes and try again.' });
-    const row = email && pw.length <= 200 ? await store.userByEmail(email) : null;
-    const usable = Boolean(row && String(row.password_hash).startsWith('scrypt:'));
-    const ok = (await verifyPassword(pw, usable ? row.password_hash : DUMMY_HASH)) && usable;
-    if (!row || !ok) { await limiter.fail(ipK); await limiter.fail(emK); return res.status(401).json({ ok: false, error: 'Incorrect email or password.' }); }
+    // A slot on each key is claimed atomically BEFORE the slow password check, so a burst of parallel guesses cannot all slip past a
+    // pre-check that only sees failures already written. The slots stay recorded when the guess is wrong (they ARE the failure
+    // record); a correct password, or an error that was not a guess, gives them back.
+    const ipSlot = await limiter.reserve(ipK, 10, WIN);
+    const emSlot = ipSlot && await limiter.reserve(emK, 5, WIN);
+    if (!ipSlot || !emSlot) { await limiter.release(ipSlot); return res.status(429).json({ ok: false, error: 'Too many failed attempts. Please wait 15 minutes and try again.' }); }
+    let row = null, failed = false;
+    try {
+      row = email && pw.length <= 200 ? await store.userByEmail(email) : null;
+      const usable = Boolean(row && String(row.password_hash).startsWith('scrypt:'));
+      const ok = (await verifyPassword(pw, usable ? row.password_hash : DUMMY_HASH)) && usable;
+      if (!row || !ok) { failed = true; return res.status(401).json({ ok: false, error: 'Incorrect email or password.' }); }
+    } finally { if (!failed) await limiter.release(ipSlot, emSlot); }
     await limiter.clear(emK);
     await store.touchLogin(row.id);
     await startSession(req, res, row.id);
@@ -143,8 +156,12 @@ export function createAuth(store, { isProd, originAllowed, hashIp, limiter }) {
   router.post('/password', requireUser, asyncH(async (req, res) => {
     const row = await store.userWithHash(req.user.id);
     if (!req.user.hasPassword) return res.status(400).json({ ok: false, error: 'Your account signs in with Google, so it has no password to change.' });
-    if (await limiter.blocked(`pw:${req.user.id}`, 5, WIN)) return res.status(429).json({ ok: false, error: 'Too many attempts. Please wait a few minutes.' });
-    if (!(await verifyPassword(String(req.body?.current ?? ''), row.password_hash))) { await limiter.fail(`pw:${req.user.id}`); return res.status(400).json({ ok: false, errors: { current: 'Your current password is not correct.' } }); }
+    const slot = await limiter.reserve(`pw:${req.user.id}`, 5, WIN);          // claimed up front, kept only for a wrong password — see /login
+    if (!slot) return res.status(429).json({ ok: false, error: 'Too many attempts. Please wait a few minutes.' });
+    let wrong = false;
+    try { wrong = !(await verifyPassword(String(req.body?.current ?? ''), row.password_hash)); }
+    finally { if (!wrong) await limiter.release(slot); }
+    if (wrong) return res.status(400).json({ ok: false, errors: { current: 'Your current password is not correct.' } });
     const problem = passwordProblem(req.body?.next, req.user.email);
     if (problem) return res.status(400).json({ ok: false, errors: { next: problem } });
     await store.updateUser(req.user.id, { passwordHash: await hashPassword(req.body.next) });

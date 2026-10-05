@@ -263,12 +263,16 @@ export async function createStore({ pool } = {}) {
     },
 
     /* rate limiting (see limits.js) */
+    /** Records one hit and resolves to its row id, so the caller can later give back exactly that hit (rateRelease). */
     async rateHit(key) {
       const t = Date.now();
-      await db.run('INSERT INTO rate_events (k, ts) VALUES (?,?)', [key, t]);
+      const id = await db.insert('INSERT INTO rate_events (k, ts) VALUES (?,?)', [key, t]);
       if (Math.random() < 0.05) await db.run('DELETE FROM rate_events WHERE ts < ?', [t - 3_600_000]);     // housekeeping
+      return id;
     },
     async rateCount(key, windowMs) { return Number((await db.all('SELECT COUNT(*) AS n FROM rate_events WHERE k = ? AND ts > ?', [key, Date.now() - windowMs]))[0].n); },
+    /** Deletes one hit by its id (the one rateHit returned) — never any other row, so it cannot disturb a concurrent caller's hit. */
+    async rateRelease(id) { await db.run('DELETE FROM rate_events WHERE id = ?', [id]); },
     async rateClear(key) { await db.run('DELETE FROM rate_events WHERE k = ?', [key]); },
 
     /* site content (+ version history). `version` is the row's revision: NULL (a row from before the column existed) reads as 0,
