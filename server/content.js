@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SCHEMA, isWebUrl } from '../content/schema.js';
+import { SCHEMA, normalizeWebUrl } from '../content/schema.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_CONTENT = JSON.parse(readFileSync(resolve(root, 'content/default.json'), 'utf8'));
@@ -26,7 +26,11 @@ function clean(f, raw, path, errors, parent) {
       if (!s) { if (!f.optional) fail(`${label} can't be empty.`); return ''; }
       if (s.length > (f.max ?? 200)) { fail(`${label} is too long (max ${f.max} characters).`); return s.slice(0, f.max); }
       if (f.type === 'href' && !HREF.test(s)) fail(`${label} must start with #, /, https://, http:// or mailto:`);
-      if (f.type === 'url' && !isWebUrl(s)) fail(`${label} must be a full web address such as https://example.com/ (http or https, no spaces).`);
+      if (f.type === 'url') {                                   // saved normalised: https://Example.com → https://example.com/
+        const n = normalizeWebUrl(s);
+        if (!n) fail(`${label} must be a full web address such as https://example.com/ (http or https, no spaces).`);
+        else return n;
+      }
       if (f.type === 'color' && !COLOR.test(s)) fail(`${label} must be a colour like #12a6ff.`);
       if (f.type === 'image' && !MEDIA_URL.test(s)) { fail(`${label} must be a photo uploaded here.`); return ''; }
       if (f.type === 'select') {

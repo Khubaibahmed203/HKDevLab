@@ -14,13 +14,15 @@
  *   numlist  list of numbers 0–100         obj      nested group (`fields`)
  *   objlist  repeatable group (`fields`)
  * Modifiers: max, min (length), maxItems, minItems, optional, when: { field: [values] }, itemLabel,
- *            default (bool), noun / wide (image: wording and a landscape thumbnail)
+ *            default (bool), noun / wide (image: wording and a landscape thumbnail),
+ *            hidden (kept and validated, but not shown in the admin form — deprecated or server-maintained data),
+ *            livePreview (url: the admin shows the live page in a browser frame under the field)
  * A field with `when` is only required (and only checked) while its condition holds, so a field that is not `optional`
  * but has `when: { kind: ['live'] }` is required for live projects only.
  */
 export const ICONS = ['monitor', 'dashboard', 'cpu', 'code', 'zap', 'devices', 'heart', 'shield', 'rocket', 'globe', 'chat', 'chart', 'lock', 'star', 'users', 'layers'];
 export const KINDS = [
-  { value: 'live', label: 'Live project (screenshot of its landing page + link)' },   // first = what a new project starts as
+  { value: 'live', label: 'Live project (its real landing page, shown from the Live URL)' },   // first = what a new project starts as
   { value: 'hero', label: 'Sample · landing page (drawn mockup)' },
   { value: 'dash', label: 'Sample · dashboard (drawn mockup)' },
   { value: 'chat', label: 'Sample · chat / assistant (drawn mockup)' },
@@ -36,6 +38,21 @@ export function isWebUrl(s) {
     const u = new URL(s);
     return /^https?:$/.test(u.protocol) && u.hostname.includes('.') && !u.username && !u.password;
   } catch { return false; }
+}
+
+/**
+ * What gets saved for an address typed in the admin: trimmed, "example.com/x" → "https://example.com/x", host lower-cased,
+ * default port and #fragment dropped, always a full href. Returns '' when it is not an acceptable web address
+ * (so `javascript:`, `data:`, relative paths, hosts without a dot and addresses with a login are all refused).
+ */
+export function normalizeWebUrl(s) {
+  let t = String(s ?? '').trim();
+  if (!t) return '';
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(t) && /^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[:/?#]|$)/i.test(t)) t = `https://${t}`;   // typed without https://
+  if (!isWebUrl(t)) return '';
+  const u = new URL(t);
+  u.hash = '';
+  return u.href;
 }
 
 const text = (k, label, o = {}) => ({ k, label, type: 'text', max: 120, ...o });
@@ -124,9 +141,15 @@ export const SCHEMA = [
         { k: 'kind', label: 'Layout', type: 'select', options: KINDS },
         area('description', 'Short description', { max: 180, when: LIVE, help: 'One or two sentences about the project.' }),
         list('technologies', 'Technologies', { max: 24, maxItems: 8, when: LIVE, help: 'Up to 8, e.g. React, Node.js, PostgreSQL.' }),
-        weburl('liveUrl', 'Live website URL', { when: LIVE, help: 'The full address, e.g. https://example-project.vercel.app/. "View live", the project and its name all open it in a new tab.' }),
+        weburl('liveUrl', 'Live website URL', { when: LIVE, livePreview: true, help: 'The full address, e.g. https://example-project.vercel.app/. The preview below, and the card on the website, are built from this address — there is nothing to upload. "View live", the card and its name open it in a new tab.' }),
         weburl('githubUrl', 'GitHub URL (optional)', { optional: true, when: LIVE, help: 'Shown as a small "GitHub" link next to "View live". Leave empty to hide it.' }),
-        { k: 'preview', label: 'Landing-page screenshot', type: 'image', noun: 'screenshot', wide: true, optional: true, when: LIVE, help: 'A screenshot of the project\'s landing page (landscape, about 16:9), shown inside the browser window. Without one the card shows the project name.' },
+        // Deprecated: uploaded screenshots. No longer editable (the Live URL is the source of the preview); kept so existing projects do not break,
+        // and only ever used as a poster / fallback for a site that cannot be shown live.
+        { k: 'preview', label: 'Landing-page screenshot (deprecated)', type: 'image', optional: true, hidden: true, when: LIVE },
+        // Maintained by the server when a project is saved (never typed by an admin): can the Live URL be shown inside an iframe?
+        text('embed', 'Embeddable', { max: 10, optional: true, hidden: true, when: LIVE }),
+        weburl('embedUrl', 'Address that was checked', { optional: true, hidden: true, when: LIVE }),
+        text('embedCheckedAt', 'Checked at', { max: 30, optional: true, hidden: true, when: LIVE }),
         text('url', 'Web address shown in the window', { max: 60, when: { kind: MOCKS } }),
         { k: 'a', label: 'Colour 1', type: 'color', when: { kind: MOCKS } },
         { k: 'b', label: 'Colour 2', type: 'color', when: { kind: MOCKS } },

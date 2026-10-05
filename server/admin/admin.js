@@ -1,4 +1,4 @@
-import { SCHEMA, isWebUrl } from '/admin/schema.js';
+import { SCHEMA, normalizeWebUrl } from '/admin/schema.js';
 
 /* HK DevLab admin portal — dependency-free. All user data is inserted with textContent / properties,
    never as HTML, and every state-changing request carries the X-Requested-With header the server requires. */
@@ -219,7 +219,7 @@ const wrapFld = (f, id, control) => h('div', { class: 'fld' }, h('label', { for:
 function group(fields, obj, touch) {
   ensure(fields, obj);
   const box = h('div', { class: 'grp' });
-  const draw = () => box.replaceChildren(...fields.filter((f) => applies(f, obj)).map((f) => field(f, obj, touch, draw)));
+  const draw = () => box.replaceChildren(...fields.filter((f) => !f.hidden && applies(f, obj)).map((f) => field(f, obj, touch, draw)));   // `hidden` fields are kept in the data but have no form control
   draw();
   return box;
 }
@@ -231,12 +231,17 @@ function field(f, obj, touch, regroup) {
       const i = h('input', { id, type: 'text', value: obj[f.k] ?? '', maxLength: f.max || 200, autocomplete: 'off', oninput: () => { obj[f.k] = i.value; touch(); } });
       return wrapFld(f, id, i);
     }
-    case 'url': {                                   // same rule as the server (isWebUrl); the server still has the last word
+    case 'url': {                                   // same rule as the server (normalizeWebUrl); the server still has the last word
       const msg = h('small', { class: 'err' });
-      const check = () => { const v = i.value.trim(); msg.textContent = v && !isWebUrl(v) ? 'Enter a full web address, e.g. https://example.com/' : ''; };
-      const i = h('input', { id, type: 'text', inputMode: 'url', placeholder: 'https://', value: obj[f.k] ?? '', maxLength: f.max || 300, autocomplete: 'off', oninput: () => { obj[f.k] = i.value; check(); touch(); } });
+      const check = () => { const v = i.value.trim(); msg.textContent = v && !normalizeWebUrl(v) ? 'Enter a full web address, e.g. https://example.com/' : ''; };
+      const i = h('input', {
+        id, type: 'text', inputMode: 'url', placeholder: 'https://example-project.vercel.app/', value: obj[f.k] ?? '', maxLength: f.max || 300, autocomplete: 'off',
+        oninput: () => { obj[f.k] = i.value; check(); touch(); pane && pane.changed(); },
+        onchange: () => { const n = normalizeWebUrl(i.value); if (n && n !== i.value) { i.value = n; obj[f.k] = n; touch(); } check(); },   // "example.com" → "https://example.com/"
+      });
+      const pane = f.livePreview ? previewPane(() => normalizeWebUrl(i.value), () => obj.name) : null;
       check();
-      return h('div', { class: 'fld' }, h('label', { for: id, text: f.label }), i, msg, f.help && h('small', { class: 'help', text: f.help }));
+      return h('div', { class: 'fld' }, h('label', { for: id, text: f.label }), i, msg, pane && pane.el, f.help && h('small', { class: 'help', text: f.help }));
     }
     case 'area': case 'lines': {
       const count = h('div', { class: 'count' });
@@ -267,6 +272,85 @@ function field(f, obj, touch, regroup) {
     case 'objlist': return objlistField(f, obj, touch);
     default: return h('div');
   }
+}
+
+/* ───────────── live preview of a project's website, in a browser-style frame ───────────── */
+// The Live URL is the only input. The server first reads the site's own headers (/api/admin/preview-check) to learn whether it
+// allows being framed — a browser can't tell, a refused frame just stays blank — and only then is the page loaded in an iframe.
+// A site that refuses gets a clear message and an "Open live website" button; nothing here tries to get around that.
+const PREVIEW_W = 1280;                                 // the page is laid out at this width, then scaled down to fit the frame
+const hostPath = (u) => { try { const x = new URL(u); return x.host + (x.pathname === '/' && !x.search ? '' : x.pathname) + x.search; } catch { return ''; } };   // project.vercel.app/products
+const WHY = { 'x-frame-options': 'It sends an X-Frame-Options header.', 'csp-frame-ancestors': 'Its Content-Security-Policy limits which sites may embed it.' };
+const PROBLEM = {
+  http: "This address starts with http://, and browsers won't show an http:// page inside this https:// page. Use the https:// address if the site has one.",
+  'blocked-address': 'That address points to a private or internal network, which can’t be previewed.',
+  timeout: 'The website took too long to answer.',
+  'not-found': 'That domain name does not exist — check the spelling.',
+  tls: "The website's security certificate is not valid.",
+  port: 'Only standard https addresses (port 443) can be previewed.',
+  rate: 'Too many previews in a short time — wait a minute and try again.',
+  status: (code) => `The website answered with an error (HTTP ${code || '?'}).`,
+  unreachable: 'The website could not be reached.',
+};
+function lockIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'pv__lock'); svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path'); path.setAttribute('d', 'M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6z'); svg.append(path);
+  return svg;
+}
+function previewPane(getUrl, getName) {
+  const addr = h('span', { class: 'pv__addr' });
+  const open = h('a', { class: 'pv__open', target: '_blank', rel: 'noopener noreferrer', title: 'Open the live website in a new tab', 'aria-label': 'Open the live website in a new tab', text: '↗', hidden: true });
+  const view = h('div', { class: 'pv__view' });
+  const status = h('small', { class: 'help', role: 'status' });
+  const refresh = h('button', { class: 'btn btn--sm', type: 'button', text: 'Refresh preview', disabled: true, onclick: () => run(true) });
+  const el = h('div', { class: 'pvw' }, h('div', { class: 'pv__tools' }, refresh, status),
+    h('div', { class: 'pv' }, h('div', { class: 'pv__bar' }, h('i'), h('i'), h('i'), h('span', { class: 'pv__pill' }, lockIcon(), addr), open), view));
+  let frame = null, shown = '', seq = 0, timer = 0;
+
+  const fit = () => view.style.setProperty('--s', String((view.clientWidth || PREVIEW_W / 2) / PREVIEW_W));
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(view);
+  const message = (title, text, url) => {
+    frame = null; shown = '';
+    view.classList.remove('is-loading');
+    view.replaceChildren(h('div', { class: 'pv__msg' }, h('b', { text: title }), text && h('span', { text }), url && h('a', { class: 'btn btn--sm', href: url, target: '_blank', rel: 'noopener noreferrer', text: 'OPEN LIVE WEBSITE ↗' })));
+  };
+  function show(url, force) {
+    if (!frame) {
+      frame = h('iframe', { title: `${getName() || 'Project'} live preview`, loading: 'lazy', referrerPolicy: 'no-referrer' });
+      frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');          // no popups, no navigating our page, no forms
+      frame.addEventListener('load', () => view.classList.remove('is-loading'));
+      view.replaceChildren(frame); fit();
+    }
+    if (shown !== url || force) { view.classList.add('is-loading'); frame.src = url; shown = url; }
+  }
+  async function run(force) {
+    const url = getUrl();
+    const mine = ++seq;
+    status.textContent = '';
+    refresh.disabled = !url;
+    if (!url) { addr.textContent = ''; open.hidden = true; return message('Live project preview', 'Enter the Live Website URL above and its landing page appears here.'); }
+    addr.textContent = hostPath(url); open.href = url; open.hidden = false;
+    if (!force && frame && shown === url) return;                                // already showing this address — never reload it for nothing
+    if (!frame) { view.classList.add('is-loading'); view.replaceChildren(h('div', { class: 'pv__msg' }, h('span', { text: 'Checking the website…' }))); }
+    const r = await api('POST', '/api/admin/preview-check', { url });
+    if (mine !== seq) return;                                                    // a different address was typed in the meantime
+    const d = r.data || {};
+    if (d.ok && d.embeddable) { show(url, force); status.textContent = 'This website allows embedding — showing the live page.'; return; }
+    if (d.ok && d.reason === 'http') return message('Live preview unavailable', PROBLEM.http, url);
+    if (d.ok) { status.textContent = WHY[d.reason] || ''; return message('Live preview unavailable', 'This website prevents embedded previews.', url); }
+    const why = PROBLEM[d.reason];
+    message("Couldn't load a preview", (typeof why === 'function' ? why(d.status) : why) || PROBLEM.unreachable, url);
+  }
+  const changed = () => { clearTimeout(timer); timer = setTimeout(() => run(false), 700); };      // the preview follows the address as it is typed
+  message('Live project preview', getUrl() ? 'The live page loads here when this comes into view.' : 'Enter the Live Website URL above and its landing page appears here.');
+
+  // The first preview loads when it is scrolled into view — opening the form must not load every project's website at once.
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((e) => { if (e.some((x) => x.isIntersecting)) { io.disconnect(); run(false); } }, { rootMargin: '150px' });
+    io.observe(el);
+  } else run(false);
+  return { el, changed };
 }
 
 /* ───────────── photo field: choose → shrink in the browser → upload → preview ───────────── */

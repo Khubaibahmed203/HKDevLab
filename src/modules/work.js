@@ -1,4 +1,5 @@
 import gsap from 'gsap';
+import { canEmbed, embedBlocked } from '../../content/visibility.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -17,12 +18,21 @@ const webUrl = (s) => (/^https?:\/\/[^\s"'<>]+$/i.test(s || '') ? s : '');   // 
 const liveHref = (w) => webUrl(w.liveUrl);          // the project's real landing page — always the admin-saved address, never hardcoded here
 const gitHref = (w) => webUrl(w.githubUrl);
 const techOf = (w) => (w.technologies || []).filter(Boolean).join(' · ');
-const hostOf = (u) => { try { return new URL(u).host; } catch { return ''; } };
-const shot = (w) => (/^\/(media|work)\/[\w.-]+$/.test(w.preview || '') ? `<img src="${esc(w.preview)}" alt="" width="1440" height="800" loading="lazy" decoding="async">` : '');   // same-origin screenshots only
+const hostPath = (u) => { try { const x = new URL(u); return x.host + (x.pathname === '/' && !x.search ? '' : x.pathname) + x.search; } catch { return ''; } };   // project.vercel.app/products
+const lock = '<svg class="mock__lock" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6z"/></svg>';
+const urlBar = (u) => `<div class="mock__bar">${dots}<u>${/^https:/i.test(u) ? lock : ''}<span>${esc(hostPath(u))}</span></u></div>`;
+// DEPRECATED uploaded screenshots: no longer editable. If an older project still has one it is only a poster shown until the live page
+// has loaded, or the stand-in for a site that refuses to be framed. Same-origin images only.
+const shot = (w) => (/^\/(media|work)\/[\w.-]+$/.test(w.preview || '') ? `<img src="${esc(w.preview)}" alt="" width="1440" height="800" loading="lazy" decoding="async">` : '');
+const unavailable = '<div class="mock__off"><b>Live preview unavailable</b><span>This website prevents embedded previews.</span><em>Open live website ↗</em></div>';
 
 const KIND = {
-  // the address in the little window is the project's own Live URL (so there is a single place to change it)
-  live: (w) => `${bar(hostOf(liveHref(w)))}<div class="mock__shot">${shot(w) || `<p class="mock__t">${esc(w.name)}</p>`}</div>`,
+  // The card is built from the project's Live URL alone (the address in the window, the link, the live page). The live page is only
+  // framed when the server's check said the site allows it (data-src); workScene() creates that iframe later, and only for a few cards.
+  live: (w) => {
+    const poster = shot(w);
+    return `${urlBar(liveHref(w))}<div class="mock__shot"${canEmbed(w) ? ` data-src="${esc(liveHref(w))}"` : ''}>${poster || (embedBlocked(w) ? unavailable : `<p class="mock__t">${esc(w.name)}</p>`)}</div>`;
+  },
   hero: (w) => `${bar(w.url)}<div class="mock__body">${nav(first(w), w.nav, 'Start')}
     <div><p class="mock__t">${br(w.title)}</p><p class="mock__s">${esc(w.sub)}</p>${w.cta ? `<span class="mock__btn">${esc(w.cta)}</span>` : ''}</div>
     <div class="mock__art"><span class="ring2"></span><span class="orb"></span><span class="sq"></span><span class="sq"></span></div></div>`,
@@ -77,6 +87,7 @@ export function workScene() {
 
   const layout = () => {
     sizeUnits();
+    slides.forEach((s) => s.style.setProperty('--fs', String(s.offsetWidth / 1440)));   // a live page is laid out 1440px wide, then scaled to the card
     R = (inner.offsetWidth / 2) / Math.tan(Math.PI / slots) * 1.14;
     inner.style.setProperty('--R', `${R}px`);
     render(state.rot);
@@ -95,6 +106,7 @@ export function workScene() {
     });
     if (front !== shown) {
       shown = front;
+      syncFrames(front);
       const w = WORK[front];
       $('#workIdx').textContent = String(front + 1).padStart(2, '0');
       gsap.fromTo('#workName, #workMeta, #workDesc, #workTech, #workLive, #workGit', { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.06, ease: 'expo.out', overwrite: true });
@@ -109,8 +121,37 @@ export function workScene() {
     }
   }
 
+  /* Live pages. Loading every project's website would make this page crawl, so an iframe exists only for the card in front and its
+     neighbours, only while this section is near the screen, and is dropped again once the ring has turned well past it. Nothing loads
+     with the page. The frames are not interactive (the card is a link) and are sandboxed: no popups, no navigating this page. */
+  const frames = new Array(n).fill(null);
+  let near = false;
+  const mount = (i) => {
+    const box = $('.mock__shot[data-src]', slides[i]);
+    if (!box || frames[i]) return;
+    const f = document.createElement('iframe');
+    f.title = `${WORK[i].name} — live preview`;
+    f.src = box.dataset.src;
+    f.referrerPolicy = 'no-referrer';
+    f.tabIndex = -1;
+    f.setAttribute('aria-hidden', 'true');
+    f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+    f.addEventListener('load', () => f.classList.add('is-ready'));          // fades in over the poster / name card
+    box.append(f);
+    frames[i] = f;
+  };
+  function syncFrames(front) {
+    slides.forEach((s, i) => {
+      const d = Math.abs(i - front);
+      if (near && d <= 1) mount(i);
+      else if (d > 2 && frames[i]) { frames[i].remove(); frames[i] = null; }
+    });
+  }
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => { near = es.some((e) => e.isIntersecting); if (near) syncFrames(shown); }, { rootMargin: '500px 0px' }) : null;   // no observer → no live frames, just posters
+
   layout();
   window.addEventListener('resize', layout);
+  if (io) io.observe($('#work'));
 
   gsap.to(state, {
     rot: -step * (n - 1), ease: 'none',
@@ -118,5 +159,5 @@ export function workScene() {
     scrollTrigger: { trigger: '#work', start: 'top top', end: 'bottom bottom', scrub: 0.7 },     // stage is CSS-sticky (sections.css)
   });
 
-  return () => window.removeEventListener('resize', layout);
+  return () => { window.removeEventListener('resize', layout); if (io) io.disconnect(); frames.forEach((f) => f && f.remove()); };
 }

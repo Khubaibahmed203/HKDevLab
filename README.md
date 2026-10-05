@@ -66,6 +66,25 @@ permanent address and is cached for a year. The upload endpoint (`POST /api/admi
 Origin, is rate-limited, accepts only JPEG / PNG / WebP decided from the file's own first bytes (never SVG), and refuses files over 1.5 MB.
 Content can only point at `/media/<id>` addresses, never at outside image URLs. On Vercel `vercel.json` routes `/media/*` to the same function.
 
+## Selected Concepts: the Live URL is the preview
+
+In **Admin → Site content → Selected Concepts** a project needs only its **Live website URL** — there is no screenshot to take or upload.
+The admin shows the page in a browser-style frame (and updates it as you type; *Refresh preview* reloads it), and the website's card is
+built from the same address.
+
+- **Can the site be shown?** A browser can't tell a page whether a cross-origin frame was refused, so when content is saved the *server* reads
+  the site's response headers (`X-Frame-Options`, CSP `frame-ancestors`) and stores the verdict on the project (`embed`, only for the address
+  that was checked; re-checked when the URL changes or after a week). We only read what the site says — nothing tries to get around it.
+  A site that refuses gets a clear "Live preview unavailable — Open live website ↗" card instead of a blank frame.
+- **The check is SSRF-guarded** (`server/probe.js`): https on port 443 only, only the headers are read, private / loopback / link-local
+  addresses are refused at connect time, a few redirects are followed and re-checked, short timeout, signed-in editors only, rate-limited.
+- **Public performance:** nothing is framed when the page loads. An iframe exists only for the card in front and its neighbours, only while
+  the section is near the screen, and is dropped again once the ring has turned past it. Frames are sandboxed, not interactive and send no referrer.
+- **Security policy:** the page may frame exactly the sites that were checked and allow it (`frame-src`, built from the saved projects); the
+  admin may frame any https site (to preview a typed address); everything else stays blocked.
+- **Old screenshots** (`preview`) are deprecated: no longer editable, never deleted. They only act as a poster until the live page has loaded,
+  or as the stand-in for a site that can't be framed.
+
 ## How a contact message travels
 
 ```

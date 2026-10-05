@@ -10,7 +10,8 @@ import { createAuth } from './auth.js';
 import { createGoogle } from './google.js';
 import { createLimiter } from './limits.js';
 import { DEFAULT_CONTENT, sanitizeContent, withDefaults } from './content.js';
-import { publicContent } from '../content/visibility.js';
+import { publicContent, canEmbed } from '../content/visibility.js';
+import { probeEmbed } from './probe.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(root, 'dist');
@@ -24,7 +25,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
  * "first account" lock, sessions and the site content all live in the database (content is re-read every few seconds).
  * Environment variables are read here, at call time, so index.js can load .env first.
  */
-export async function createApp() {
+export async function createApp({ probe = probeEmbed } = {}) {       // `probe` is only replaced by the tests (no real network)
   const IS_PROD = process.env.NODE_ENV === 'production';
   const HASH_SALT = process.env.IP_HASH_SALT || 'hkdevlab';
   const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -54,9 +55,12 @@ export async function createApp() {
   const remember = (content, updatedAt, updatedBy) => { cache = { at: Date.now(), content, meta: { updatedAt, updatedBy } }; };
 
   /* ───────────── security headers ───────────── */
+  // frame-src is what OUR pages may put in an <iframe>: nothing external by default; the public page adds exactly the sites
+  // of the projects that were checked and allow embedding, and the admin (to preview a typed address) allows any https site.
+  const csp = (frameSrc = "'self'") => `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-src ${frameSrc}; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:`;
   app.use((req, res, next) => {
     res.set({
-      'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:",
+      'Content-Security-Policy': csp(),
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
@@ -159,9 +163,35 @@ export async function createApp() {
     const row = await store.getContent();
     res.json({ content: row ? withDefaults(row.data) : DEFAULT_CONTENT, updatedAt: row?.updatedAt, updatedBy: row?.updatedBy });
   }));
+  // The address of the site as OUR pages are served (what a site's frame-ancestors has to allow).
+  const ownOrigin = (req) => (process.env.PUBLIC_URL || `${req.protocol}://${req.get('x-forwarded-host') || req.get('host')}`).replace(/\/+$/, '');
+
+  /**
+   * Decides, on the server, which live projects can be shown in an iframe — the browser cannot tell, and an editor must not be
+   * trusted to say so. Re-checks only a new or changed Live URL (or a result older than a week); an unchanged one keeps its verdict.
+   * A site that can't be reached is left "unknown" (it simply won't be framed) and is tried again on the next save.
+   */
+  async function stampEmbeds(value, req) {
+    const before = new Map(((await store.getContent())?.data?.work?.items || []).filter((i) => i.liveUrl).map((i) => [i.liveUrl, i]));
+    const origin = ownOrigin(req);
+    const stale = [];
+    for (const it of value.work.items) {
+      const blank = () => Object.assign(it, { embed: '', embedUrl: '', embedCheckedAt: '' });
+      if (it.kind !== 'live' || !it.liveUrl) { blank(); continue; }
+      const old = before.get(it.liveUrl);
+      if (old?.embed && old.embedUrl === it.liveUrl && Date.now() - Date.parse(old.embedCheckedAt) < 7 * 86_400_000) Object.assign(it, { embed: old.embed, embedUrl: old.embedUrl, embedCheckedAt: old.embedCheckedAt });
+      else { blank(); stale.push(it); }
+    }
+    await Promise.all(stale.map(async (it) => {
+      const r = await probe(it.liveUrl, { origin }).catch(() => ({ ok: false }));
+      if (r.ok) Object.assign(it, { embed: r.embeddable ? 'ok' : 'blocked', embedUrl: it.liveUrl, embedCheckedAt: new Date().toISOString() });
+    }));
+  }
+
   admin.put('/content', asyncH(async (req, res) => {
     const { errors, value } = sanitizeContent(req.body?.content);
     if (errors) return res.status(400).json({ ok: false, errors });
+    await stampEmbeds(value, req);
     const at = await store.saveContent(value, req.user.email, String(req.body?.note ?? '').slice(0, 120));
     remember(value, at, req.user.email);
     res.json({ ok: true, content: value, updatedAt: at, updatedBy: req.user.email });
@@ -184,12 +214,20 @@ export async function createApp() {
     res.status(201).json({ ok: true, url: `/media/${id}` });
   }));
 
+  // The admin form's live preview asks this when a Live URL is typed: may the site be shown in a frame? (admins and editors only)
+  admin.post('/preview-check', asyncH(async (req, res) => {
+    if (await limiter.take(`p:${req.user.id}`, 60, 10 * 60_000)) return res.status(429).json({ ok: false, reason: 'rate' });
+    const r = await probe(String(req.body?.url ?? '').slice(0, 400), { origin: ownOrigin(req) }).catch(() => ({ ok: false, reason: 'unreachable' }));
+    res.json(r);
+  }));
+
   admin.get('/content/versions', asyncH(async (req, res) => res.json({ versions: await store.listVersions() })));
   admin.post('/content/restore/:id', asyncH(async (req, res) => {
     const old = await store.getVersion(+req.params.id);
     if (!old) return res.status(404).json({ ok: false, error: 'Version not found.' });
     const { errors, value } = sanitizeContent(withDefaults(old));
     if (errors) return res.status(422).json({ ok: false, errors });
+    await stampEmbeds(value, req);
     const at = await store.saveContent(value, req.user.email, `Restored version #${req.params.id}`);
     remember(value, at, req.user.email);
     res.json({ ok: true, content: value, updatedAt: at, updatedBy: req.user.email });
@@ -197,7 +235,7 @@ export async function createApp() {
   app.use('/api/admin', admin);
 
   /* ───────────── the admin portal (static UI; every action behind the API above) ───────────── */
-  app.use('/admin', (req, res, next) => { res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' }); next(); });
+  app.use('/admin', (req, res, next) => { res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', 'Content-Security-Policy': csp('https:') }); next(); });
   app.get('/admin/schema.js', (req, res) => res.type('js').sendFile(resolve(root, 'content/schema.js')));
   app.get(['/admin', '/admin/'], (req, res) => res.sendFile(resolve(root, 'server/admin/index.html')));
   app.use('/admin', express.static(resolve(root, 'server/admin'), { index: false }));
@@ -237,7 +275,11 @@ export async function createApp() {
       index: false,
       setHeaders: (res, file) => res.set('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'),
     }));
-    app.get('/', asyncH(async (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(renderIndex(await site()))));
+    app.get('/', asyncH(async (req, res) => {
+      const s = await site();
+      const origins = [...new Set(publicContent(s.content).work.items.filter(canEmbed).map((i) => new URL(i.liveUrl).origin))];   // exactly the sites we will frame
+      res.set({ 'Cache-Control': 'no-cache', 'Content-Security-Policy': csp(["'self'", ...origins].join(' ')) }).type('html').send(renderIndex(s));
+    }));
   }
   app.use((req, res) => res.status(404).type('text').send('Not found'));
   app.use((err, req, res, next) => {                              // bad JSON, oversize body…

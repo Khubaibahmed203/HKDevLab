@@ -12,7 +12,17 @@ delete process.env.DATABASE_URL;
 let pass = 0, fail = 0;
 const ok = (name, cond, extra = '') => { (cond ? pass++ : fail++); console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + extra}`); };
 const { createApp } = await import(new URL('./app.js', import.meta.url).href);
-const { app, store, hasDist } = await createApp();
+const { probeEmbed, framingVerdict, isBlockedAddress } = await import(new URL('./probe.js', import.meta.url).href);
+const { canEmbed, embedBlocked } = await import(new URL('../content/visibility.js', import.meta.url).href);
+// the app is given a stand-in for the network check, so this test needs no internet
+const probed = [];
+const VERDICTS = {
+  'https://allowed.example.com/': { ok: true, embeddable: true, reason: 'no-restriction' },
+  'https://other-allowed.example.com/': { ok: true, embeddable: true, reason: 'no-restriction' },
+  'https://refuses.example.com/': { ok: true, embeddable: false, reason: 'x-frame-options' },
+};
+const fakeProbe = async (url) => { probed.push(url); return VERDICTS[url] || { ok: false, reason: 'not-found' }; };
+const { app, store, hasDist } = await createApp({ probe: fakeProbe });
 const server = await new Promise((r) => { const s = app.listen(8832, () => r(s)); });
 const base = 'http://localhost:8832';
 
@@ -26,7 +36,7 @@ async function call(method, path, { json, raw, type, auth = true } = {}) {
   for (const c of res.headers.getSetCookie?.() || []) { const [kv] = c.split(';'); const [k, v] = kv.split('='); cookie = v === '' ? '' : `${k}=${v}`; }
   const buf = Buffer.from(await res.arrayBuffer());
   let data = {}; try { data = JSON.parse(buf.toString()); } catch { /* not JSON */ }
-  return { status: res.status, data, text: buf.toString(), buf };
+  return { status: res.status, data, text: buf.toString(), buf, headers: res.headers };
 }
 const publicNames = async () => (await call('GET', '/api/content', { auth: false })).data.work.items.map((i) => i.name);
 const adminDoc = async () => (await call('GET', '/api/admin/content')).data.content;
@@ -132,6 +142,93 @@ doc = await adminDoc(); doc.work.items = doc.work.items.filter((i) => i.name !==
 ok('after deleting, it is gone from the public site and the admin', r.status === 200 && !(await publicNames()).includes('To delete') && !(await adminDoc()).work.items.some((i) => i.name === 'To delete'));
 doc = await adminDoc(); doc.work.items = []; r = await save(doc);
 ok('every concept can be removed (the section then hides)', r.status === 200 && (await publicNames()).length === 0);
+
+/* ═════════ the Live URL is the preview: normalising, the framing check, and what the server stamps on each project ═════════ */
+ok('a project with only a Live URL (no screenshot) saves — the old upload is not needed', await (async () => { doc = await adminDoc(); doc.work.items = [project({ name: 'No shot', liveUrl: 'https://allowed.example.com/', preview: '' })]; r = await save(doc); return r.status === 200; })());
+
+// normalising what is typed
+const saveUrl = async (typed) => { doc = await adminDoc(); doc.work.items = [project({ name: 'URL test', liveUrl: typed })]; const x = await save(doc); return x.status === 200 ? x.data.content.work.items[0].liveUrl : `refused:${x.data.errors?.[0]?.path}`; };
+ok('"Example.COM/Path#top" is saved as https://example.com/Path', await saveUrl('Example.COM/Path#top') === 'https://example.com/Path');
+ok('a typed https:// address is kept, host lower-cased', await saveUrl('HTTPS://Project-A.Vercel.App') === 'https://project-a.vercel.app/');
+ok('the default port is dropped', await saveUrl('https://example.com:443/x') === 'https://example.com/x');
+ok('javascript: is refused', (await saveUrl('javascript:alert(1)')).startsWith('refused:'));
+ok('data: is refused', (await saveUrl('data:text/html,<script>alert(1)</script>')).startsWith('refused:'));
+ok('ftp: is refused', (await saveUrl('ftp://example.com/')).startsWith('refused:'));
+
+// the framing rules (X-Frame-Options and CSP frame-ancestors), as browsers apply them
+const ME = 'https://hkdevlab.example';
+ok('no restriction → can be framed', framingVerdict({}, ME).embeddable === true);
+ok('X-Frame-Options: DENY → refuses', framingVerdict({ 'x-frame-options': 'DENY' }, ME).embeddable === false);
+ok('X-Frame-Options: SAMEORIGIN → refuses', framingVerdict({ 'x-frame-options': 'sameorigin' }, ME).embeddable === false);
+ok("frame-ancestors 'none' → refuses", framingVerdict({ 'content-security-policy': "default-src 'self'; frame-ancestors 'none'" }, ME).embeddable === false);
+ok("frame-ancestors 'self' → refuses (that is the site's own origin, not ours)", framingVerdict({ 'content-security-policy': "frame-ancestors 'self'" }, ME).embeddable === false);
+ok('frame-ancestors * → can be framed', framingVerdict({ 'content-security-policy': 'frame-ancestors *' }, ME).embeddable === true);
+ok('frame-ancestors listing our origin → can be framed', framingVerdict({ 'content-security-policy': `frame-ancestors 'self' ${ME}` }, ME).embeddable === true);
+ok('frame-ancestors listing a wildcard that matches us → can be framed', framingVerdict({ 'content-security-policy': 'frame-ancestors https://*.hkdevlab.example' }, 'https://www.hkdevlab.example').embeddable === true);
+ok('frame-ancestors listing only another site → refuses', framingVerdict({ 'content-security-policy': 'frame-ancestors https://other.example' }, ME).embeddable === false);
+ok('frame-ancestors overrides X-Frame-Options, as in browsers', framingVerdict({ 'content-security-policy': 'frame-ancestors *', 'x-frame-options': 'DENY' }, ME).embeddable === true);
+ok('a CSP without frame-ancestors leaves X-Frame-Options in charge', framingVerdict({ 'content-security-policy': "default-src 'self'", 'x-frame-options': 'DENY' }, ME).embeddable === false);
+
+// the server fetching an editor-typed address must never reach a private network
+for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::ffff:127.0.0.1', 'fc00::1', 'fe80::1']) ok(`${ip} is a refused address`, isBlockedAddress(ip) === true);
+for (const ip of ['93.184.216.34', '8.8.8.8', '2606:4700:4700::1111']) ok(`${ip} is an ordinary public address`, isBlockedAddress(ip) === false);
+let p = await probeEmbed('https://127.0.0.1/');
+ok('probe: a loopback address is refused without any request', p.ok === false && p.reason === 'blocked-address', JSON.stringify(p));
+p = await probeEmbed('https://169.254.169.254/latest/meta-data/');
+ok('probe: the cloud metadata address is refused', p.ok === false && p.reason === 'blocked-address', JSON.stringify(p));
+p = await probeEmbed('https://192.168.0.10/');
+ok('probe: a private network address is refused', p.ok === false && p.reason === 'blocked-address', JSON.stringify(p));
+p = await probeEmbed('https://example.com:8443/');
+ok('probe: only port 443', p.ok === false && p.reason === 'port', JSON.stringify(p));
+p = await probeEmbed('javascript:alert(1)');
+ok('probe: a dangerous scheme is invalid', p.ok === false && p.reason === 'invalid', JSON.stringify(p));
+p = await probeEmbed('http://example.com/');
+ok('probe: an http:// address is reported as not embeddable, with no request made', p.ok === true && p.embeddable === false && p.reason === 'http', JSON.stringify(p));
+
+// the admin form's check endpoint
+ok('the preview check is refused without signing in (401)', (await call('POST', '/api/admin/preview-check', { json: { url: 'https://allowed.example.com/' }, auth: false })).status === 401);
+r = await call('POST', '/api/admin/preview-check', { json: { url: 'https://allowed.example.com/' } });
+ok('the preview check answers an editor: embeddable', r.status === 200 && r.data.ok && r.data.embeddable === true, JSON.stringify(r.data));
+r = await call('POST', '/api/admin/preview-check', { json: { url: 'https://refuses.example.com/' } });
+ok('…and says when a site refuses', r.status === 200 && r.data.ok && r.data.embeddable === false && r.data.reason === 'x-frame-options', JSON.stringify(r.data));
+
+// what the server stamps on each project when content is saved
+doc = await adminDoc();
+doc.work.items = [
+  project({ name: 'Frameable', liveUrl: 'https://allowed.example.com/' }),
+  project({ name: 'Refuses', liveUrl: 'https://refuses.example.com/', embed: 'ok', embedUrl: 'https://refuses.example.com/', embedCheckedAt: new Date().toISOString() }),   // an editor claiming "ok" for a site that refuses
+  project({ name: 'Unreachable', liveUrl: 'https://down.example.com/' }),
+];
+probed.length = 0; r = await save(doc);
+const [fr, rf, un] = r.data.content.work.items;
+ok('a project whose site allows framing is stamped embeddable for exactly that address', fr.embed === 'ok' && fr.embedUrl === 'https://allowed.example.com/' && !!fr.embedCheckedAt, JSON.stringify(fr));
+ok('an editor cannot claim a site is embeddable — the server decides (a refusing site stays "blocked")', rf.embed === 'blocked', JSON.stringify(rf));
+ok('a site that cannot be reached is left unknown, so it is simply not framed', un.embed === '' && un.embedUrl === '');
+ok('canEmbed / embedBlocked follow the stamp', canEmbed(fr) && !canEmbed(rf) && embedBlocked(rf) && !canEmbed(un) && !embedBlocked(un));
+ok('canEmbed is off once the address no longer matches the one that was checked', !canEmbed({ ...fr, liveUrl: 'https://elsewhere.example.com/' }));
+const pubStamp = (await call('GET', '/api/content', { auth: false })).data.work.items;
+ok('the public content carries the verdicts (the page needs them to choose frame or fallback)', pubStamp[0].embed === 'ok' && pubStamp[1].embed === 'blocked');
+probed.length = 0; doc = await adminDoc(); doc.work.items[0].description = 'edited text only'; await save(doc);
+ok('saving without changing a Live URL does not check the sites again', probed.filter((u) => u !== 'https://down.example.com/').length === 0, probed.join(','));
+doc = await adminDoc(); doc.work.items[0].liveUrl = 'https://other-allowed.example.com/'; probed.length = 0; r = await save(doc);
+ok('changing the Live URL re-checks the new address and the verdict follows it', r.data.content.work.items[0].embed === 'ok' && r.data.content.work.items[0].embedUrl === 'https://other-allowed.example.com/' && probed.includes('https://other-allowed.example.com/'), JSON.stringify(r.data.content?.work.items[0]));
+doc = await adminDoc(); doc.work.items[0].liveUrl = 'https://refuses.example.com/'; r = await save(doc);
+ok('…and pointing it at a site that refuses flips the card to its fallback', r.data.content.work.items[0].embed === 'blocked' && embedBlocked(r.data.content.work.items[0]));
+doc = await adminDoc(); doc.work.items[0].liveUrl = 'https://allowed.example.com/'; doc.work.items[0].kind = 'hero'; Object.assign(doc.work.items[0], { a: '#112233', b: '#445566', url: 'x.example', title: 'Hi' }); r = await save(doc);
+ok('a drawn sample layout has no embed verdict', r.status === 200 && r.data.content.work.items[0].embed === '', JSON.stringify(r.data.errors || r.data.content.work.items[0]));
+
+// the page may frame exactly the sites that were checked, and nothing else
+doc = await adminDoc();
+doc.work.items = [project({ name: 'Frameable', liveUrl: 'https://allowed.example.com/' }), project({ name: 'Refuses', liveUrl: 'https://refuses.example.com/' }), project({ name: 'Draft frameable', liveUrl: 'https://allowed.example.com/', published: false })];
+await save(doc);
+const csp = (h) => String(h.get('content-security-policy') || '');
+ok('API responses allow no frames beyond our own origin', csp((await call('GET', '/api/content', { auth: false })).headers).includes("frame-src 'self';"));
+ok('the admin portal may preview any https site in its frame', csp((await call('GET', '/admin', { auth: false })).headers).includes('frame-src https:;'));
+if (hasDist) {
+  const page = csp((await call('GET', '/', { auth: false })).headers);
+  ok("the public page's CSP allows framing exactly the site that was checked (and not the one that refuses)", page.includes("frame-src 'self' https://allowed.example.com;") && !page.includes('refuses.example.com'), page.match(/frame-src[^;]*/)?.[0]);
+  ok("…and the page can't be embedded elsewhere", page.includes("frame-ancestors 'none'"));
+}
 
 server.close(); await store.close();
 for (const s of ['', '-wal', '-shm']) rmSync(DB + s, { force: true });
