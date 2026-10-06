@@ -225,14 +225,18 @@ const captureErrors = async (fn) => {
   ok('21. the zombie did NOT run specialist integration (no specialist recommendation was created)', (await specialistRecs(zombie.site)) === 0);
   ok('21. the zombie did NOT persist diagnostics for the audit it no longer owns', zAfter.specialist_diagnostics === null);
   ok('21. losing the race is logged', zLogs.some((l) => new RegExp(`audit #${zAudit.id} was already recovered as stale`).test(l)), zLogs.join(' | '));
-  ok('no cleanup: the zombie\'s own crawl data (page, issues) is left in place for the failed audit', (await store.listPages(zombie.site.id)).some((p) => p.url.startsWith(live) && !p.url.endsWith('/old-page')) && (await store.listIssues({ websiteId: zombie.site.id, auditId: zAudit.id })).length > 0);
+  // (Hardening #8 changed this one: a worker that lost its audit used to leave its own crawl data behind; it now stops before writing any.)
+  ok('no cleanup, and no new crawl data: the prior audit\'s page and issue are untouched, and the zombie recorded no page or issue of its own', (await store.listPages(zombie.site.id)).length === 1 && (await store.listPages(zombie.site.id))[0].url === `${live}/old-page` && (await store.listPages(zombie.site.id))[0].title === 'Old' && (await store.listIssues({ websiteId: zombie.site.id })).length === 1 && (await store.listIssues({ websiteId: zombie.site.id, auditId: zAudit.id })).length === 0);
 
-  // failure path: the worker throws AFTER its audit was recovered
+  // failure path: the worker throws AFTER its audit was recovered. An ownership check now stops a recovered worker before it writes anything,
+  // so this models the one window a check can never close — recovery lands just AFTER the check, so the worker still sees 'running', carries
+  // on writing, and then fails.
   const boom = { ...store, createIssues: async () => { throw new Error('simulated persistence failure'); } };
+  const justAfterCheck = { ...boom, getAudit: async (id) => { const row = await store.getAudit(id); return row && { ...row, status: 'running' }; } };
   const ff = await seedWebsite('d-fail-recovered');
   const ffAudit = await store.createAudit(ff.site.id, { baseUrl: live, pagesPlanned: 5, status: 'queued' });
   gate = makeGate();
-  const ffRun = executeScan(boom, ff.site.id, ffAudit.id, live);
+  const ffRun = executeScan(justAfterCheck, ff.site.id, ffAudit.id, live);
   await gate.arrived;
   await store.failStaleAudits(ff.site.id, { cutoff: futureCutoff(), summary: STALE_AUDIT_SUMMARY });
   const ffRecovered = await store.getAudit(ffAudit.id);

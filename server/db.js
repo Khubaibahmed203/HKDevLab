@@ -341,7 +341,15 @@ export async function createStore({ pool } = {}) {
     async getWebsite(id) { return website((await db.all('SELECT * FROM websites WHERE id = ?', [id]))[0]); },
 
     /* pages: current known facts for one crawlable URL, upserted by (website, url) — a page's row always
-       reflects its MOST RECENT crawl; per-audit history lives in seo_issues/page_links via audit_id. */
+       reflects its MOST RECENT crawl; per-audit history lives in seo_issues/page_links via audit_id.
+       OWNERSHIP: with an `auditId`, the write is REFUSED — nothing changes, and the existing row's id is still returned — when the
+       row is already owned (last_audit_id) by a strictly NEWER audit of this same website. That is how a worker whose audit was
+       recovered as stale (so it is older than the audit that replaced it) can never overwrite, or move backwards, what the newer
+       audit established. The condition lives in the UPDATE itself, so it holds however the writers interleave: PostgreSQL re-checks
+       it against the row's latest version when two writers collide. Audit ids only grow and are never reused (AUTOINCREMENT /
+       BIGSERIAL), and only an id that really is an audit of THIS website counts as a newer owner, so an empty (legacy) or foreign or
+       unknown last_audit_id never blocks anyone. Without an `auditId` nothing claims ownership and the write is unconditional,
+       exactly as before. */
     async upsertPage({ websiteId, url, finalUrl, statusCode, contentType, title, description, canonical, robots,
       h1Count, h2Count, wordCount, htmlSize, responseTimeMs, depth, imageCount, imagesMissingAlt, lang,
       ogTitle, ogDescription, ogImage, twitterCard, jsonLdPresent, auditId }) {
@@ -350,22 +358,32 @@ export async function createStore({ pool } = {}) {
         h1Count ?? null, h2Count ?? null, wordCount ?? null, htmlSize ?? null, responseTimeMs ?? null, depth ?? null,
         imageCount ?? null, imagesMissingAlt ?? null, lang || null, ogTitle || null, ogDescription || null, ogImage || null,
         twitterCard || null, jsonLdPresent == null ? null : (jsonLdPresent ? 1 : 0), auditId ?? null];
-      const existing = (await db.all('SELECT id FROM pages WHERE website_id = ? AND url = ?', [websiteId, url]))[0];
-      if (existing) {
-        await db.run(
-          `UPDATE pages SET final_url=?, status_code=?, content_type=?, title=?, description=?, canonical=?, robots=?,
+      const find = async () => (await db.all('SELECT id FROM pages WHERE website_id = ? AND url = ?', [websiteId, url]))[0];
+      let existing = await find();
+      if (!existing) {
+        try {
+          return await db.insert(
+            `INSERT INTO pages (website_id,url,final_url,status_code,content_type,title,description,canonical,robots,
+               h1_count,h2_count,word_count,html_size,response_time_ms,depth,image_count,images_missing_alt,lang,
+               og_title,og_description,og_image,twitter_card,json_ld_present,last_audit_id,last_crawled_at,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [websiteId, url, ...vals, at, at, at]);
+        } catch (err) {
+          // another writer — typically the newer audit — created this very page between our read and our insert: it exists now, so take the ordinary guarded update below
+          if (!(err?.code === '23505' || /UNIQUE constraint failed/i.test(String(err?.message)))) throw err;
+          existing = await find();
+          if (!existing) throw err;
+        }
+      }
+      const SET = `final_url=?, status_code=?, content_type=?, title=?, description=?, canonical=?, robots=?,
              h1_count=?, h2_count=?, word_count=?, html_size=?, response_time_ms=?, depth=?, image_count=?, images_missing_alt=?,
              lang=?, og_title=?, og_description=?, og_image=?, twitter_card=?, json_ld_present=?, last_audit_id=?,
-             last_crawled_at=?, updated_at=? WHERE id=?`,
-          [...vals, at, at, existing.id]);
-        return Number(existing.id);
-      }
-      return db.insert(
-        `INSERT INTO pages (website_id,url,final_url,status_code,content_type,title,description,canonical,robots,
-           h1_count,h2_count,word_count,html_size,response_time_ms,depth,image_count,images_missing_alt,lang,
-           og_title,og_description,og_image,twitter_card,json_ld_present,last_audit_id,last_crawled_at,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [websiteId, url, ...vals, at, at, at]);
+             last_crawled_at=?, updated_at=?`;
+      if (auditId == null) await db.run(`UPDATE pages SET ${SET} WHERE id=?`, [...vals, at, at, existing.id]);
+      else await db.run(
+        `UPDATE pages SET ${SET} WHERE id=? AND (last_audit_id IS NULL OR NOT (last_audit_id > ? AND last_audit_id IN (SELECT id FROM seo_audits WHERE website_id = ?)))`,
+        [...vals, at, at, existing.id, auditId, websiteId]);
+      return Number(existing.id);
     },
     async listPages(websiteId) { return (await db.all('SELECT * FROM pages WHERE website_id = ? ORDER BY id', [websiteId])).map(page); },
     async getPage(id) { return page((await db.all('SELECT * FROM pages WHERE id = ?', [id]))[0]); },

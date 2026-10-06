@@ -78,6 +78,16 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
   try {
     const crawl = await crawlWebsite(baseUrl, limits);
 
+    // Ownership: the crawl can take minutes, and stale recovery may have failed this audit while it ran (a newer audit may already be
+    // writing). A worker that no longer owns its audit stops here and records nothing. This is NOT the correctness boundary — the
+    // check cannot close the window between it and the writes below — which is why upsertPage() refuses, in SQL, to overwrite a page
+    // a newer audit already owns; this just keeps an audit that is already over from producing more rows.
+    const owned = await store.getAudit(auditId);
+    if (!owned || owned.status !== 'running') {
+      console.error(`[seo] audit #${auditId} was already recovered as stale before this scan could record its crawl (status: ${owned?.status ?? 'missing'}) — writing nothing and skipping all post-audit work`);
+      return;
+    }
+
     // Audit honesty: if the start page was never observed there is nothing true to report. Fail the scan through the catch below — the
     // one existing failure path (no score, no new status, guarded by finishAudit()) — carrying the crawl's real counts, and record
     // NOTHING from this crawl: no page, link or issue rows, so the previous audit's data and the comparison baseline stay as they were.
