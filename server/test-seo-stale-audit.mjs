@@ -43,28 +43,35 @@ const captureErrors = async (fn) => {
 
 /* ───────────── A. stale sweep (store level) — items 1-11 ───────────── */
 {
+  // A website can have only ONE queued/running audit (Hardening #9: the database refuses a second), so each active audit below lives on its own
+  // website, and the sweep — which is per website — is run once per website with the same cutoff.
   const site = await store.ensureWebsite('stale-a.test', 'A');
+  const siteQ = await store.ensureWebsite('stale-a-queued.test', 'AQ');
+  const siteFreshR = await store.ensureWebsite('stale-a-fresh-running.test', 'AFR');
+  const siteFreshQ = await store.ensureWebsite('stale-a-fresh-queued.test', 'AFQ');
   const other = await store.ensureWebsite('stale-b.test', 'B');
-  const freshRunning = await newAudit(site.id, 'running');
-  const freshQueued = await newAudit(site.id, 'queued');
-  const staleRunning = await newAudit(site.id, 'running'); backdate(staleRunning.id, 31);
-  const staleQueued = await newAudit(site.id, 'queued'); backdate(staleQueued.id, 31);
   const doneOld = await newAudit(site.id, 'running');
   await store.finishAudit(doneOld.id, { score: 91, status: 'complete', summary: 'real result', pagesCrawled: 3, errorsCount: 0, durationMs: 10 }); backdate(doneOld.id, 120);
   const failedOld = await newAudit(site.id, 'running');
   await store.finishAudit(failedOld.id, { score: null, status: 'failed', summary: 'a real crawl error' }); backdate(failedOld.id, 120);
+  const staleRunning = await newAudit(site.id, 'running'); backdate(staleRunning.id, 31);
+  const staleQueued = await newAudit(siteQ.id, 'queued'); backdate(staleQueued.id, 31);
+  const freshRunning = await newAudit(siteFreshR.id, 'running');
+  const freshQueued = await newAudit(siteFreshQ.id, 'queued');
   const otherStale = await newAudit(other.id, 'running'); backdate(otherStale.id, 31);
   const before = Date.now();
   const doneBefore = await store.getAudit(doneOld.id), failedBefore = await store.getAudit(failedOld.id);
 
   const n = await store.failStaleAudits(site.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY });
-  ok('recovers exactly the two stale active audits (one running, one queued) and reports the count', n === 2, String(n));
+  ok('5. only the requested website is affected (another website\'s stale audits, queued or running, are untouched)', (await store.getAudit(otherStale.id)).status === 'running' && (await store.getAudit(staleQueued.id)).status === 'queued');
+  const nq = await store.failStaleAudits(siteQ.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY });
+  const nFresh = (await store.failStaleAudits(siteFreshR.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY })) + (await store.failStaleAudits(siteFreshQ.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY }));
+  ok('recovers exactly the stale active audit of each website (one running, one queued), reports the count, and finds nothing on the websites whose audit is fresh', n === 1 && nq === 1 && nFresh === 0, JSON.stringify([n, nq, nFresh]));
   ok('1. a fresh running audit is NOT recovered', (await store.getAudit(freshRunning.id)).status === 'running');
   ok('2. a fresh queued audit is NOT recovered', (await store.getAudit(freshQueued.id)).status === 'queued');
   const sr = await store.getAudit(staleRunning.id), sq = await store.getAudit(staleQueued.id);
   ok('3. a stale running audit becomes failed', sr.status === 'failed');
   ok('4. a stale queued audit becomes failed', sq.status === 'failed');
-  ok('5. only the requested website is affected (another website\'s stale audit is untouched)', (await store.getAudit(otherStale.id)).status === 'running');
   ok('6. an existing complete audit is untouched, even though it is old', JSON.stringify(await store.getAudit(doneOld.id)) === JSON.stringify(doneBefore));
   ok('7. an existing failed audit is untouched (its real error is not replaced)', JSON.stringify(await store.getAudit(failedOld.id)) === JSON.stringify(failedBefore) && failedBefore.summary === 'a real crawl error');
   ok('8. recovery is idempotent — a second sweep changes nothing', (await store.failStaleAudits(site.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY })) === 0);
@@ -123,8 +130,9 @@ const captureErrors = async (fn) => {
   ok('15. queued -> complete works and reports true', (await finish(q.id, 'complete')) === true && (await store.getAudit(q.id)).status === 'complete' && (await store.getAudit(q.id)).score === 88);
   const r = await newAudit(site.id, 'running');
   ok('16. running -> complete works and reports true (score, summary and finished_at recorded)', (await finish(r.id, 'complete')) === true && (await store.getAudit(r.id)).status === 'complete' && (await store.getAudit(r.id)).summary === 'ok' && !!(await store.getAudit(r.id)).finished_at);
-  const q2 = await newAudit(site.id, 'queued'), r2 = await newAudit(site.id, 'running');
+  const q2 = await newAudit(site.id, 'queued');
   ok('17. queued -> failed works and reports true', (await finish(q2.id, 'failed')) === true && (await store.getAudit(q2.id)).status === 'failed');
+  const r2 = await newAudit(site.id, 'running');   // only after q2 is over: a website can have one active audit at a time
   ok('17. running -> failed works and reports true, keeping the real error text', (await finish(r2.id, 'failed')) === true && (await store.getAudit(r2.id)).summary === 'a real error');
 
   const done = await store.getAudit(r.id);
@@ -260,15 +268,18 @@ const captureErrors = async (fn) => {
 {
   const pool = new (newDb().adapters.createPg().Pool)();
   const pg = await createStore({ pool });
-  const site = await pg.ensureWebsite('pg-stale.test', 'PG');
+  // one active audit per website (Hardening #9), so the fresh, stale-running and stale-queued audits each get their own website, swept one by one
+  const site = await pg.ensureWebsite('pg-stale.test', 'PG'), siteQ = await pg.ensureWebsite('pg-stale-queued.test', 'PGQ'), siteF = await pg.ensureWebsite('pg-stale-fresh.test', 'PGF');
   const backdatePg = (id, minutes) => pool.query('UPDATE seo_audits SET started_at = $1 WHERE id = $2', [new Date(Date.now() - minutes * MIN).toISOString(), id]);
-  const mk = (status) => pg.createAudit(site.id, { baseUrl, pagesPlanned: 5, status });
-  const fresh = await mk('running'), staleR = await mk('running'), staleQ = await mk('queued'), done = await mk('running');
-  await backdatePg(staleR.id, 31); await backdatePg(staleQ.id, 31);
+  const mk = (s, status) => pg.createAudit(s.id, { baseUrl, pagesPlanned: 5, status });
+  const done = await mk(site, 'running');
   await pg.finishAudit(done.id, { score: 70, status: 'complete', summary: 'ok', pagesCrawled: 1, errorsCount: 0, durationMs: 5 }); await backdatePg(done.id, 90);
-  ok('pg-mem: the sweep recovers exactly the two stale active audits', (await pg.failStaleAudits(site.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY })) === 2);
+  const fresh = await mk(siteF, 'running'), staleR = await mk(site, 'running'), staleQ = await mk(siteQ, 'queued');
+  await backdatePg(staleR.id, 31); await backdatePg(staleQ.id, 31);
+  const sweepAll = async () => (await pg.failStaleAudits(site.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY })) + (await pg.failStaleAudits(siteQ.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY })) + (await pg.failStaleAudits(siteF.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY }));
+  ok('pg-mem: the sweep recovers exactly the two stale active audits', (await sweepAll()) === 2);
   ok('pg-mem: fresh and complete audits are untouched; stale ones are failed with finished_at and the summary', (await pg.getAudit(fresh.id)).status === 'running' && (await pg.getAudit(done.id)).status === 'complete' && (await pg.getAudit(staleR.id)).status === 'failed' && !!(await pg.getAudit(staleQ.id)).finished_at && (await pg.getAudit(staleQ.id)).summary === STALE_AUDIT_SUMMARY);
-  ok('pg-mem: a second sweep is idempotent', (await pg.failStaleAudits(site.id, { cutoff: cutoff30(), summary: STALE_AUDIT_SUMMARY })) === 0);
+  ok('pg-mem: a second sweep is idempotent', (await sweepAll()) === 0);
   ok('pg-mem: finishAudit() on a recovered audit reports false and changes nothing; on a live one it reports true', (await pg.finishAudit(staleR.id, { status: 'complete', score: 99 })) === false && (await pg.getAudit(staleR.id)).status === 'failed' && (await pg.finishAudit(fresh.id, { status: 'complete', score: 99, summary: 'ok' })) === true);
   await pg.close();
 }

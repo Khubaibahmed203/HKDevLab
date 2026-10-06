@@ -67,7 +67,9 @@ async function pageLevel(b) {
   const site = await store.ensureWebsite(`zombie-${label}.test`, `zombie-${label}`);
   const other = await store.ensureWebsite(`zombie-other-${label}.test`, 'other');
   const newAudit = (siteId = site.id) => store.createAudit(siteId, { baseUrl: 'https://zombie.test/', pagesPlanned: 10, status: 'running' });
-  const A = await newAudit(), B = await newAudit(), otherAudit = await newAudit(other.id);          // ids only grow: A < B < otherAudit
+  const A = await newAudit();
+  await store.failStaleAudits(site.id, { cutoff: new Date(Date.now() + 60_000).toISOString(), summary: 'recovered as stale' });   // A is recovered first, as in production: the database allows ONE active audit per website
+  const B = await newAudit(), otherAudit = await newAudit(other.id);                                 // ids only grow: A < B < otherAudit
   ok(T('S0. setup: audit ids only grow, so a recovered audit is always older than the one that replaced it'), A.id < B.id && B.id < otherAudit.id);
   const w = (s, u, o) => s.upsertPage({ websiteId: site.id, url: u, finalUrl: u, ...o });
   const get = async (u) => (await store.listPages(site.id)).filter((p) => p.url === u);
@@ -286,7 +288,8 @@ for (const b of [sqlite, pg]) {
   ok('W4. the page id is returned whether or not the write won (callers keep working)', /return Number\(existing\.id\);/.test(up));
   ok('W5. executeScan checks ownership right after the crawl — before it decides the start page, analyzes, or writes anything — and returns without finishing or post-audit work', exec.indexOf('store.getAudit(auditId)') > 0 && exec.indexOf('store.getAudit(auditId)') < exec.indexOf('startPageProblem(crawl)') && exec.indexOf('store.getAudit(auditId)') < exec.indexOf('store.upsertPage(') && /owned\.status !== 'running'\)\s*\{[\s\S]*?return;/.test(exec));
   ok('W6. the one production caller of upsertPage always names its audit', (jobs.match(/store\.upsertPage\(/g) || []).length === 1 && /jsonLdPresent: p\.jsonLdPresent, auditId,/.test(jobs));
-  ok('W7. scope: no schema change (no new column, table or index), no transaction or lock code, finishAudit still called exactly twice, no new audit status', (dbSrc.match(/ADD COLUMN/g) || []).length === 2 && !/CREATE UNIQUE INDEX|BEGIN|COMMIT|ROLLBACK|FOR UPDATE|pg_advisory/i.test(dbSrc) && (jobs.match(/store\.finishAudit\(/g) || []).length === 2 && !/status: 'zombie'|status: 'stale'/.test(jobs));
+  // (Hardening #9 deliberately added the one partial unique index on seo_audits; this scope proof now allows exactly that one and nothing more.)
+  ok('W7. scope: no new column, no unique index other than the one-active-audit index, no transaction or lock code, finishAudit still called exactly twice, no new audit status', (dbSrc.match(/ADD COLUMN/g) || []).length === 2 && (dbSrc.match(/CREATE UNIQUE INDEX/g) || []).length === 1 && /CREATE UNIQUE INDEX IF NOT EXISTS \$\{ACTIVE_AUDIT_INDEX\} ON seo_audits \(website_id\)/.test(dbSrc) && !/BEGIN|COMMIT|ROLLBACK|FOR UPDATE|pg_advisory/i.test(dbSrc) && (jobs.match(/store\.finishAudit\(/g) || []).length === 2 && !/status: 'zombie'|status: 'stale'/.test(jobs));
 }
 
 for (const s of sockets) s.destroy();

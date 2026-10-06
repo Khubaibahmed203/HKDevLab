@@ -137,8 +137,13 @@ nothing, so the same audit is never crawled twice, a `running`/`complete`/`faile
 and a `failed` job never auto-restarts (nothing ever resets it back to `queued`). States: `queued` → `running` →
 `complete` / `failed`. `POST /scan` itself is guarded the same way against a duplicate: `queueScan()` only
 inserts a new `queued` row if none is already `queued`/`running` for that website (`createAuditIfNoneActive()`,
-an atomic `INSERT … WHERE NOT EXISTS`, not a separate check-then-insert) — two near-simultaneous `POST /scan`
-calls can't both slip through; the loser gets a 409 naming the audit already in flight.
+an `INSERT … WHERE NOT EXISTS`, not a separate check-then-insert). That check alone cannot stop two simultaneous
+PostgreSQL sessions (default `READ COMMITTED`: both can see "nothing active"), so the **database enforces it**: a
+partial unique index on `seo_audits (website_id)` for `queued`/`running` rows allows one active audit per website
+(and any number of `complete`/`failed` ones). `createStore()` builds it at startup, first failing the older of any
+already-duplicated active audits of a website (the newest is kept; history is untouched). The loser of a race gets
+the index's unique violation, which `createAuditIfNoneActive()` — and only that error — reports as "already
+active"; `POST /scan` answers it with a 409 naming the audit already in flight.
 
 **Production crawl safety** — the scan target is always resolved from a registered `websites` row, never a bare
 URL from the browser: an admin request may name a `websiteId` explicitly (refused with 404 if it doesn't exist),

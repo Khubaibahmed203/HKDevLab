@@ -13,6 +13,16 @@ const now = () => new Date().toISOString();
 const MAX_VERSIONS = 40;
 // The only recommendation status changes production may make; there is no pending → applied (a person must approve first).
 const RECOMMENDATION_TRANSITIONS = new Set(['pending>approved', 'pending>rejected', 'approved>applied', 'approved>failed']);
+// Phase 4 Hardening #9: a website has at most ONE queued/running audit, and the DATABASE enforces it (a partial unique index). The
+// INSERT…WHERE NOT EXISTS in createAuditIfNoneActive() is only a fast path: under PostgreSQL READ COMMITTED two sessions can both see
+// "nothing active" and both insert, and nothing but a constraint stops the second.
+const ACTIVE_AUDIT_INDEX = 'uq_seo_audits_one_active_per_website';
+export const DUPLICATE_ACTIVE_AUDIT_SUMMARY = 'Marked failed at startup: a newer queued or running audit already existed for this website, and only one active audit per website is allowed.';
+// True ONLY for a violation of that index. PostgreSQL reports SQLSTATE 23505 plus the violated index's name (so the primary key or any
+// other unique constraint is never mistaken for it); pg-mem reports 23505 without a name; SQLite names the column. Everything else is a real failure.
+const isActiveAuditConflict = (err) => err?.code === '23505'
+  ? !err.constraint || err.constraint === ACTIVE_AUDIT_INDEX
+  : /UNIQUE constraint failed: seo_audits\.website_id\b/.test(String(err?.message));
 
 /* ───────────── adapters ───────────── */
 async function sqliteAdapter() {
@@ -142,6 +152,34 @@ export async function createStore({ pool } = {}) {
   // INTEGER: rows that predate it are NULL (SQLite, PostgreSQL and pg-mem do not all back-fill a default), and every read
   // and write below treats NULL as version 0.
   await addColumn('content', 'version', 'INTEGER');
+
+  // Phase 4 Hardening #9: one active audit per website, enforced by a partial unique index. A database that predates it may already hold
+  // several queued/running audits for one website (the race this closes, or manual edits), and the index cannot be built over them — so
+  // first fail every active audit that a NEWER active audit of the same website supersedes. The survivor is the highest id, the same audit
+  // activeAudit() and latestAudit() already treat as "the current one", and the same outcome stale recovery gives an audit that a newer scan
+  // replaced; a failed audit's worker is already handled (finishAudit refuses it, executeScan stops). History (complete/failed rows) and every
+  // website with a single active audit are untouched. The UPDATE is idempotent: a second run finds nothing to change.
+  const normalizeActiveAudits = async () => {
+    const changed = await db.run(
+      `UPDATE seo_audits SET status = 'failed', finished_at = ?, summary = ?
+       WHERE status IN ('queued','running')
+         AND id NOT IN (SELECT MAX(id) FROM seo_audits WHERE status IN ('queued','running') GROUP BY website_id)`,
+      [now(), DUPLICATE_ACTIVE_AUDIT_SUMMARY]);
+    if (changed > 0) console.error(`[db] failed ${changed} duplicate active audit(s): a website may have only one queued/running audit — kept the newest of each`);
+  };
+  // Another instance still running the previous code can insert a duplicate between the normalization and the index build (the index then
+  // cannot be built), and two instances starting together can collide on the DDL itself: normalize again and retry, then fail loudly — a
+  // server that silently runs without the index would look protected and not be.
+  for (let attempt = 1; ; attempt++) {
+    await normalizeActiveAudits();
+    try {
+      await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${ACTIVE_AUDIT_INDEX} ON seo_audits (website_id) WHERE status IN ('queued','running')`);
+      break;
+    } catch (err) {
+      if (attempt >= 3) throw err;
+      console.error(`[db] could not build the one-active-audit index (attempt ${attempt} of 3): ${String(err?.message).slice(0, 200)} — repairing and retrying`);
+    }
+  }
 
   const enq = (r) => ({ ...r, id: Number(r.id), email_sent: !!Number(r.email_sent) });
   const website = (r) => r && { ...r, id: Number(r.id) };
@@ -390,7 +428,9 @@ export async function createStore({ pool } = {}) {
 
     /* SEO audits (one row per SCAN→ANALYZE run). `status` defaults to 'running' so every pre-Phase-2.1
        caller (existing tests, direct store use) keeps working unchanged; the async job queue (server/seo/
-       jobs.js) is the only caller that passes status: 'queued' and lets claimAudit() below move it along. */
+       jobs.js) is the only caller that passes status: 'queued' and lets claimAudit() below move it along.
+       This helper is unguarded and for tests: since Hardening #9 the database refuses a second queued/running audit for a website,
+       so it throws (a unique violation) if one is already active — production creates audits only through createAuditIfNoneActive(). */
     async createAudit(websiteId, { baseUrl, pagesPlanned, status = 'running' } = {}) {
       const at = now();
       const id = await db.insert('INSERT INTO seo_audits (website_id,started_at,status,base_url,pages_planned) VALUES (?,?,?,?,?)', [websiteId, at, status, baseUrl || null, pagesPlanned ?? null]);
@@ -405,10 +445,14 @@ export async function createStore({ pool } = {}) {
     async activeAudit(websiteId) {
       return audit((await db.all("SELECT * FROM seo_audits WHERE website_id = ? AND status IN ('queued','running') ORDER BY id DESC LIMIT 1", [websiteId]))[0]);
     },
-    /** Atomic duplicate-scan protection: inserts a new 'queued' audit ONLY if no queued/running one already
-     *  exists for this website — same INSERT…SELECT…WHERE NOT EXISTS pattern as createFirstUser() above, so
-     *  of two POST /scan requests that both raced past a plain activeAudit() check, exactly one still wins.
-     *  Returns the new audit, or null if one was already active. */
+    /** Duplicate-scan protection: inserts a new 'queued' audit ONLY if no queued/running one already exists for
+     *  this website, and returns the new audit — or null if one was already active.
+     *  Two layers, and only the second is the guarantee. The INSERT…SELECT…WHERE NOT EXISTS (same pattern as
+     *  createFirstUser() above) turns the ordinary duplicate into a plain "0 rows inserted". But under PostgreSQL's
+     *  default READ COMMITTED two concurrent sessions can both see "nothing active" and both insert, so the partial
+     *  unique index on (website_id) for queued/running rows (see createStore) is the authority: the loser's INSERT
+     *  is rejected by the database, and exactly that violation — nothing else — is reported as null, i.e. "already
+     *  active", which the route already turns into its 409. Any other error is a real failure and is thrown. */
     async createAuditIfNoneActive(websiteId, { baseUrl, pagesPlanned } = {}) {
       const at = now();
       // CAST(...) on the bare (tableless) SELECT's numeric placeholders: without it, Postgres/pg-mem can't
@@ -416,11 +460,17 @@ export async function createStore({ pool } = {}) {
       // INSERT ... VALUES) and guesses 'text', which then fails against website_id's BIGINT column. SQLite
       // accepts the same CAST syntax too (its "INT"-containing type names just select integer affinity), so
       // one query string still works unmodified on both backends.
-      const id = await db.insert(
-        `INSERT INTO seo_audits (website_id,started_at,status,base_url,pages_planned)
-         SELECT CAST(? AS BIGINT), ?, 'queued', ?, CAST(? AS BIGINT)
-         WHERE NOT EXISTS (SELECT 1 FROM seo_audits WHERE website_id = CAST(? AS BIGINT) AND status IN ('queued','running'))`,
-        [websiteId, at, baseUrl || null, pagesPlanned ?? null, websiteId]);
+      let id;
+      try {
+        id = await db.insert(
+          `INSERT INTO seo_audits (website_id,started_at,status,base_url,pages_planned)
+           SELECT CAST(? AS BIGINT), ?, 'queued', ?, CAST(? AS BIGINT)
+           WHERE NOT EXISTS (SELECT 1 FROM seo_audits WHERE website_id = CAST(? AS BIGINT) AND status IN ('queued','running'))`,
+          [websiteId, at, baseUrl || null, pagesPlanned ?? null, websiteId]);
+      } catch (err) {
+        if (isActiveAuditConflict(err)) return null;
+        throw err;
+      }
       return id ? { id, website_id: websiteId, started_at: at, finished_at: null, score: null, status: 'queued', summary: null, base_url: baseUrl || null, pages_planned: pagesPlanned ?? null } : null;
     },
     /** Terminal transition (complete/failed). Guarded so it can only ever leave a non-terminal state: an audit
