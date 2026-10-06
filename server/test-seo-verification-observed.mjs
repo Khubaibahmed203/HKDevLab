@@ -109,7 +109,8 @@ async function endToEnd(label, store) {
     sc.change(w.st);
     const v = await crawlAudit(w, { base: sc.unreachable ? await closedBase() : w.base, env: sc.env || {} });
     const rec = await store.getRecommendation(seeded.rec.id), pageNow = (await store.listPages(w.site.id)).find((p) => p.id === seeded.page.id);
-    ok(T(`${sc.name}: the verifying audit itself completes normally and returns (verification can never break a scan)`), !v.run.hung && v.run.ok && v.audit.status === 'complete', JSON.stringify({ hung: v.run.hung, status: v.audit.status }));
+    const wantStatus = sc.unreachable ? 'failed' : 'complete';   // Hardening #7: an audit whose START page was never observed is a failed audit, never a complete one
+    ok(T(`${sc.name}: the verifying audit itself ${sc.unreachable ? 'ends FAILED (its start page was never observed)' : 'completes normally'} and returns (verification can never break a scan)`), !v.run.hung && v.run.ok && v.audit.status === wantStatus, JSON.stringify({ hung: v.run.hung, status: v.audit.status }));
     if (sc.expect) {
       ok(T(`${sc.name}: the page WAS observed (200, text/html, by this audit) -> verdict "${sc.expect}"`), pageNow.last_audit_id === v.audit.id && pageNow.status_code === 200 && rec.verified_status === sc.expect && rec.verified_audit_id === v.audit.id && rec.verified_at != null, JSON.stringify({ page: [pageNow.last_audit_id, pageNow.status_code], rec: [rec.verified_status, rec.verified_audit_id] }));
       ok(T(`${sc.name}: lifecycle and content untouched`), lifecycleIntact(rec, seeded.rec) && JSON.stringify(await store.getContent()) === contentBefore);

@@ -52,6 +52,22 @@ export async function queueScan(store, website, { baseUrl } = {}) {
   return audit;
 }
 
+/** Why this crawl never actually observed its starting page — or null when it did. The start page is always pages[0] (crawler.js
+ *  queues it first, and the analyzer takes its startUrl from there too). It counts as observed when the analyzer can represent it:
+ *  a fetched HTML page whatever its HTTP status (a 404/503 HTML page becomes an ordinary broken-page issue), or a page robots.txt
+ *  excludes (reported as a critical robots-disallow issue). Anything else — no response at all (refused, DNS, timeout, oversized
+ *  body) or a response that is not HTML — leaves the analyzer nothing to analyze: every page-level issue would simply vanish, and a
+ *  "complete" audit with a score would claim a clean bill of health nobody checked. */
+const startPageProblem = (crawl) => {
+  const start = crawl.pages[0];
+  if (!start) return 'the crawl recorded no pages';
+  if (start.disallowedByRobots) return null;
+  if (start.error) return String(start.error).slice(0, 200);
+  if (start.statusCode == null) return 'no response was received';
+  if (!/text\/html/i.test(start.contentType || '')) return `it is not an HTML page — HTTP ${start.statusCode}, ${String(start.contentType || 'no content type').slice(0, 80)}`;
+  return null;
+};
+
 /** Runs one already-created audit's crawl to completion (or failure). Safe to call more than once for the
  *  same audit id — claimAudit() ensures only the first caller to reach 'queued' actually does the work. */
 export async function executeScan(store, websiteId, auditId, baseUrl) {
@@ -61,6 +77,17 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
   const startedAt = Date.now();
   try {
     const crawl = await crawlWebsite(baseUrl, limits);
+
+    // Audit honesty: if the start page was never observed there is nothing true to report. Fail the scan through the catch below — the
+    // one existing failure path (no score, no new status, guarded by finishAudit()) — carrying the crawl's real counts, and record
+    // NOTHING from this crawl: no page, link or issue rows, so the previous audit's data and the comparison baseline stay as they were.
+    const unobserved = startPageProblem(crawl);
+    if (unobserved) {
+      throw Object.assign(
+        new Error(`The start page ${crawl.pages[0]?.url || baseUrl} could not be observed (${unobserved}), so no results were recorded for this scan`),
+        { pagesCrawled: crawl.pages.length, errorsCount: crawl.errors.length });
+    }
+
     const issues = analyzePages(crawl);
 
     const urlToPageId = new Map();
@@ -127,7 +154,7 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
       await store.setSpecialistDiagnostics(auditId, diagnostics).catch((err) => console.error('[seo] persisting specialist diagnostics failed:', err.message));
     }
   } catch (err) {
-    const recorded = await store.finishAudit(auditId, { score: null, status: 'failed', summary: String(err.message || err), durationMs: Date.now() - startedAt });
+    const recorded = await store.finishAudit(auditId, { score: null, status: 'failed', summary: String(err.message || err), pagesCrawled: err?.pagesCrawled, errorsCount: err?.errorsCount, durationMs: Date.now() - startedAt });
     if (!recorded) console.error(`[seo] audit #${auditId} failed (${String(err.message || err).slice(0, 200)}) but had already been moved out of queued/running — leaving it as it is`);
   }
 }
@@ -147,21 +174,37 @@ const issueKey = (i) => `${i.type}:${i.page_id ?? ''}`;
 
 /** BEFORE vs AFTER: buckets the previous complete audit's issues against this one's by (type, page), so a
  *  re-scan can honestly report resolved/introduced/unchanged counts — never a claimed improvement that
- *  isn't backed by the analyzer actually finding fewer issues. */
+ *  isn't backed by the analyzer actually finding fewer issues.
+ *
+ *  An issue that is no longer reported only counts as RESOLVED when this audit really looked at its page (observedByAudit, the same
+ *  test verification uses); a page the audit never reached, or that failed or was not a successful HTML response, tells us nothing
+ *  about its old issues, so they are reported as `notRecheckedCount` instead — neither resolved nor still present. Only issues that
+ *  belong to a page are filtered: page-less (site-wide) issues keep their ordinary semantics, and `unchanged`/`introduced` are
+ *  never touched (an issue that IS reported again was, by definition, found by this audit).
+ *
+ *  The pages table keeps one row per page — the facts from its most recent crawl — so this is exact for the audit that crawled last
+ *  (the one just finished, which is when it is read) and conservative for an older one: its pages no longer say what it saw, so they
+ *  are not counted as resolved rather than guessed. */
 export async function compareToPreviousAudit(store, websiteId, currentAuditId) {
   const previous = await store.previousCompleteAudit(websiteId, currentAuditId);
   if (!previous) return null;
-  const [prevIssues, currIssues] = await Promise.all([
+  const [prevIssues, currIssues, pages] = await Promise.all([
     store.listIssues({ websiteId, auditId: previous.id, limit: 2000 }),
     store.listIssues({ websiteId, auditId: currentAuditId, limit: 2000 }),
+    store.listPages(websiteId),
   ]);
+  const pageById = new Map(pages.map((p) => [p.id, p]));
   const prevKeys = new Set(prevIssues.map(issueKey));
   const currKeys = new Set(currIssues.map(issueKey));
+  const notRechecked = new Set(prevIssues
+    .filter((i) => i.page_id != null && !currKeys.has(issueKey(i)) && !observedByAudit(pageById.get(i.page_id), websiteId, currentAuditId))
+    .map(issueKey));
   return {
     previousAuditId: previous.id,
-    resolvedCount: [...prevKeys].filter((k) => !currKeys.has(k)).length,
+    resolvedCount: [...prevKeys].filter((k) => !currKeys.has(k) && !notRechecked.has(k)).length,
     introducedCount: [...currKeys].filter((k) => !prevKeys.has(k)).length,
     unchangedCount: [...currKeys].filter((k) => prevKeys.has(k)).length,
+    notRecheckedCount: notRechecked.size,
   };
 }
 
