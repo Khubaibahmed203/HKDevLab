@@ -149,8 +149,21 @@ active"; `POST /scan` answers it with a 409 naming the audit already in flight.
 URL from the browser: an admin request may name a `websiteId` explicitly (refused with 404 if it doesn't exist),
 or it falls back to the one configured home website (from `PUBLIC_URL`) — the same resolution `POST /scan` has
 always used. An optional `baseUrl` must still match that website's own registered domain, or the request is
-refused (400). The crawler itself never leaves the start URL's host (external links are recorded, never
-fetched — see `server/seo/crawler.js`).
+refused (400). The crawler only follows **links** within the start URL's own host (external links are
+recorded, never fetched — see `server/seo/crawler.js`).
+
+**Redirects** are a separate matter, and are handled in one place, `fetchBounded()` (`server/seo/http.js`) — which
+robots.txt, sitemaps and pages all go through. It follows redirects itself, one hop at a time (at most 10, all
+inside the one request deadline) and checks every hop *before* requesting it (`server/seo/ssrf.js`): only `http:`/
+`https:`, never a URL with embedded credentials, and a hop to **another** host must be a public destination —
+so a site cannot use a redirect to make this server request a loopback, private, link-local (including the cloud
+metadata address `169.254.169.254`), CGNAT, multicast or otherwise non-public address, whatever spelling it uses
+(`127.1`, `2130706433`, `[::ffff:127.0.0.1]`, …), or `localhost`/`*.localhost`. A hop to the same host and port is
+always allowed, and public cross-host redirects (http→https, apex↔www, …) keep working and are still reported by
+the analyzer as an external redirect. A refused redirect makes no request and shows up as an ordinary page,
+robots.txt or sitemap error. **Known limitation:** the name check resolves the host name once and the HTTP client
+resolves it again when it connects, so this does not defend against DNS rebinding (a DNS server that answers a
+public address first and a private one second); that would need connection-time address pinning.
 
 Routes, all under `/api/admin/seo/*` behind the same auth/CSRF/rate-limiting as the rest of `/api/admin`:
 `POST /scan` (queues a job; optionally `{ websiteId, baseUrl }`) → 202, `GET /scans`, `GET /scans/latest`,

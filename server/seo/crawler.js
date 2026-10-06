@@ -8,9 +8,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * The real (network) crawler — the WEBSITE → REAL CRAWLER → PAGE DISCOVERY → HTML EXTRACTION stages of the
- * Phase 2 pipeline. Breadth-first from `startUrl`, never leaves that URL's host, and is bounded on every
- * axis that could otherwise make a scan run away: page count, link depth, per-request timeout, and total
- * queued work. It produces structured facts only — no analysis, no opinions, nothing written anywhere.
+ * Phase 2 pipeline. Breadth-first from `startUrl`, follows LINKS only within that URL's host (external links are
+ * recorded, never fetched), and is bounded on every axis that could otherwise make a scan run away: page count,
+ * link depth, per-request timeout, and total queued work. A REDIRECT is a different matter: the fetch helper in
+ * http.js follows redirects itself, so a page may legitimately land on another host (the analyzer reports that as an
+ * external redirect), but only on a public one — a hop to a loopback, private, link-local or otherwise non-public
+ * destination is refused before any request is made. It produces structured facts only — no analysis, no opinions,
+ * nothing written anywhere.
  */
 export async function crawlWebsite(startUrl, { maxPages = 100, maxDepth = 5, requestTimeoutMs = 10_000, crawlDelayMs = 250, userAgent = CRAWLER_USER_AGENT } = {}) {
   const normalizedStart = normalizeUrl(startUrl, startUrl);
