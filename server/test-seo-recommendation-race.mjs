@@ -30,12 +30,13 @@ const ok = (name, cond, extra = '') => { (cond ? pass++ : fail++); console.log(`
 
 const { createStore } = await import(new URL('./db.js', import.meta.url).href);
 const { createSeoRouter } = await import(new URL('./seo/routes.js', import.meta.url).href);
+const { siteOrigin } = await import(new URL('../content/seo.js', import.meta.url).href);
 const src = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
 /* ───────────── harness ───────────── */
 const rowOf = (store, id) => store.getRecommendation(id);
 async function seed(store, label) {
-  const site = await store.ensureWebsite(`race-${label}.test`, label);
+  const site = await store.ensureWebsite(new URL(siteOrigin(process.env.PUBLIC_URL)).host, label);   // the configured home website: Apply is bound to it (Hardening #11A); this suite is about the status races
   const audit = await store.createAudit(site.id, { baseUrl: 'http://127.0.0.1:9', pagesPlanned: 1, status: 'running' });
   await store.createIssues(site.id, audit.id, [{ pageId: null, type: 'title-length', severity: 'warning', detail: 'x' }]);
   const issue = (await store.listIssues({ websiteId: site.id, auditId: audit.id }))[0];

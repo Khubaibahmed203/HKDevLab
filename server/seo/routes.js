@@ -192,7 +192,7 @@ export function createSeoRouter(store, { limiter }) {
     if (!rec) return res.status(404).json({ ok: false, error: 'Recommendation not found.' });
     if (rec.status !== 'approved') return res.status(409).json({ ok: false, error: `Only an approved recommendation can be applied (this one is ${rec.status}).` });
 
-    const result = await applyRecommendation(store, rec, { userEmail: req.user.email });
+    const result = await applyRecommendation(store, rec, { userEmail: req.user.email, homeWebsite: await homeWebsite() });
     if (!result.ok) {
       if (result.error === 'manual implementation required') return res.status(501).json({ ok: false, error: result.error, recommendation: rec });   // status stays 'approved'
       // the site content moved on after this request read it: nothing was written and the recommendation stays approved, for a person to re-review

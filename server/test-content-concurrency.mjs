@@ -29,8 +29,14 @@ let pass = 0, fail = 0;
 const ok = (name, cond, extra = '') => { (cond ? pass++ : fail++); console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + extra}`); };
 
 const { createStore } = await import(new URL('./db.js', import.meta.url).href);
-const { applyRecommendation } = await import(new URL('./seo/apply.js', import.meta.url).href);
+const { applyRecommendation: applyBound } = await import(new URL('./seo/apply.js', import.meta.url).href);
 const { createSeoRouter } = await import(new URL('./seo/routes.js', import.meta.url).href);
+const { siteOrigin } = await import(new URL('../content/seo.js', import.meta.url).href);
+// Since Hardening #11A, Apply only writes for a recommendation that belongs to the configured home website (and home page). This suite is about
+// the content compare-and-swap, not the target, so its recommendations are given the home target; the binding itself is tested in test-seo-apply-target-binding.mjs.
+const HOME_HOST = new URL(siteOrigin(process.env.PUBLIC_URL)).host;
+const HOME_SITE = { id: 1, domain: HOME_HOST };
+const applyRecommendation = (store, rec, opts) => applyBound(store, { website_id: HOME_SITE.id, page_id: null, ...rec }, { homeWebsite: HOME_SITE, ...opts });
 const { DEFAULT_CONTENT } = await import(new URL('./content.js', import.meta.url).href);
 const { createApp } = await import(new URL('./app.js', import.meta.url).href);
 const src = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
@@ -279,7 +285,7 @@ await suite('pg-mem', makePgMem);
 async function seoRouteSuite(label, make) {
   const T = (name) => `[${label}] ${name}`;
   const { store } = await make();
-  const site = await store.ensureWebsite(`cas-${label}.test`, label);
+  const site = await store.ensureWebsite(HOME_HOST, label);   // the configured home website: Apply is bound to it (Hardening #11A)
   const audit = await store.createAudit(site.id, { baseUrl: 'http://127.0.0.1:9', pagesPlanned: 1, status: 'running' });
   await store.createIssues(site.id, audit.id, [{ pageId: null, type: 'title-length', severity: 'warning', detail: 'x' }]);
   const issue = (await store.listIssues({ websiteId: site.id, auditId: audit.id }))[0];
@@ -374,7 +380,7 @@ const apply = (id) => call('POST', `/api/admin/seo/recommendations/${id}/apply`)
 const setup = await call('POST', '/api/auth/setup', { name: 'Test Admin', email: 'cas-test@example.com', password: 'a-long-test-password-1' });
 ok('setup: the test admin exists', setup.status === 201, JSON.stringify(setup.data));
 
-const site = await store.ensureWebsite('cas-http.test', 'cas');
+const site = await store.ensureWebsite(HOME_HOST, 'cas');   // the configured home website: Apply is bound to it (Hardening #11A)
 const audit = await store.createAudit(site.id, { baseUrl: 'http://127.0.0.1:9', pagesPlanned: 1, status: 'running' });
 await store.createIssues(site.id, audit.id, [{ pageId: null, type: 'title-length', severity: 'warning', detail: 'x' }]);
 const issue = (await store.listIssues({ websiteId: site.id, auditId: audit.id }))[0];
