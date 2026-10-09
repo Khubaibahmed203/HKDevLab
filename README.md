@@ -111,9 +111,15 @@ grow — once real service/blog/case-study pages exist, the sitemap becomes gene
   fabricating a suggestion. The model id defaults to `claude-sonnet-5` and can be overridden with
   `ANTHROPIC_MODEL` without a code change.
 - **Approval + safe apply** (`server/seo/apply.js`) — every recommendation starts `pending`; only an explicitly
-  `approved` one can be applied, and only title/description recommendations can be applied automatically today
-  (through the existing `sanitizeContent()`/`saveContent()` path, so it's validated and versioned like any
-  admin edit). Anything else returns "manual implementation required" rather than an unsafe change.
+  `approved` one can be applied, and only title/description recommendations can be applied automatically today (they
+  write the site-wide `seo.title` / `seo.description`, i.e. the home page's). Before the content is read or written, Apply
+  checks that the recommendation is about the configured home website and, if it names a page, that the page's stored
+  URL is the home page `/` (a recommendation with no page stays applicable). The proposed value is then validated with
+  `sanitizeContent()` and written with `saveContentIfVersion()` — a compare-and-swap on the content version read together
+  with the document — so it is validated and versioned like any admin edit; if the content changed in the meantime
+  nothing is written (409), the recommendation stays `approved`, and there is no automatic retry. Anything else — an
+  unsupported type, or a recommendation about another website or page — returns "manual implementation required"
+  (501) rather than an unsafe change, and also leaves the recommendation `approved`.
 
 **Async scan jobs** (`server/seo/jobs.js`) — `POST /scan` only writes a `queued` `seo_audits` row and returns
 immediately (202); the HTTP request itself never crawls. There's no external queue (no Redis), and this app's
@@ -183,6 +189,71 @@ multi-page analyzer) · `node server/test-seo-recommendations.mjs` (the LLM prov
 boundary — never a real paid call — the full recommend → approve/reject → apply workflow, a provider timeout,
 and `ANTHROPIC_MODEL` overriding the model actually sent) · `node server/test-pg.mjs` (below) also exercises
 every SEO table, including the async-job primitives (`claimAudit`/`activeAudit`), over the PostgreSQL code path.
+
+### Known residual risks (recorded at Phase 4 closure)
+
+Phase 4 hardening (#1–#11A, up to commit `c91b7c59`) closed with the risks below known and accepted for the current
+single-site deployment (`hkdevlab.com`, served by Vercel). None of them blocked closure. Each is written down so it is
+not rediscovered later; anything that is only *inferred* from the code, rather than exercised by a test, says so.
+
+That acceptance covers only this one operator-run site. It is **not** an approval to crawl third-party or
+customer-supplied domains, or to run this as a public multi-tenant SaaS: several of these risks (DNS rebinding above
+all) would have to be closed first, and multi-tenant isolation, per-site authorization and onboarding are outside
+Phase 4 and were not audited.
+
+- **DNS rebinding — a hard gate before crawling any third-party domain.** The redirect check (`server/seo/ssrf.js`)
+  resolves a host name once and the HTTP client resolves it again when it connects; nothing pins the connection to the
+  address that was checked (see "Redirects" above). That is acceptable today only because the one website crawled is the
+  configured home site: no route registers other sites, `baseUrl` must match its domain, and off-host links and sitemaps
+  are never fetched, so only a redirect from the operator's own site can reach another host. Connection-time address
+  validation (a custom connector or HTTP client) **must exist before the crawler is pointed at any customer-supplied or
+  otherwise untrusted domain.**
+- **The content write and its history entry are not one transaction.** `saveContentIfVersion()` (`server/db.js`) updates
+  the content row in one statement, then adds the `content_versions` entry (and prunes old ones) in separate statements;
+  there are no transactions anywhere in `server/db.js`. A crash or database error between the two leaves the new content
+  live, with its version advanced, but with no history entry. The caller gets an error, and re-applying the same
+  recommendation then finds the value already live and writes nothing, so the missing entry is never created. The previous
+  state can still be restored from its own history entry; what is lost is the entry and snapshot of the new state. Nothing
+  detects or repairs this, and no test injects a failure there.
+- **Apply validates the whole content document, not just the field it changes.** `applyRecommendation()`
+  (`server/seo/apply.js`) sanitizes the entire document, so an unrelated invalid section (legacy data, or a later
+  tightening of a field's limits) makes a valid title or description update fail with "The proposed value failed content
+  validation", and the recommendation is recorded as `failed` — a terminal state. This is dormant today: the editor save
+  and Restore both validate before storing, and the default content applies cleanly. Fixing the invalid field in the
+  editor (its save reports which fields are invalid) repairs the document, but the failed recommendation is not revived.
+- **Who "applied" a recommendation can differ from who changed the content.** The `approved` → `applied` transition
+  records only a time (`applied_at`); there is no applied-by column. When two requests race, the one that finds the value
+  already live can win the transition and get the success response, while the one that actually wrote the content gets a
+  409 ("this one is applied"). The same is true of a retry after a crash. The content history
+  (`content_versions.user_email`, and `content.updated_by`) is the authoritative record of who changed the content;
+  `applied_at` and the HTTP response are not.
+- **Home-page target binding checks `pages.url`, not `final_url`.** Apply accepts a recommendation only for the home
+  website and, if it names a page, only a page whose stored `url` is the home root `/`. A page stored as `/` whose crawl was
+  redirected elsewhere (say to `/landing`) is still accepted even though its title and description came from the redirect
+  target, while a page such as `/old` that redirects *to* `/` is refused. The app and the deployment configs in this repo
+  do not redirect `/`; redirects configured outside the repo (domain or CDN settings) are not visible here. A person still
+  approves the specific value, and the write is validated and versioned. No test pins this behaviour.
+- **On Vercel the crawler sees static HTML, not the CMS content.** Vercel's CDN serves the built `index.html`, whose
+  title and description are fixed literals in the source `index.html` (the build does not inject CMS content); the CMS
+  values are applied only by browser JavaScript
+  (`src/main.js`, then `applyContent()` in `src/render.js`, from `/api/content`), and nothing rebuilds or revalidates the
+  static page when content is saved or a recommendation is applied. The crawler runs no JavaScript, so on Vercel it audits
+  the build-time text: home-page title and description issues, and the recommendations built from them, reflect that
+  text rather than necessarily the live CMS value, and a recommendation's `current_value` (the crawled value) is not
+  authoritative. After an Apply the crawler keeps seeing the original text, and a redeploy alone does not change that (the build reuses the
+  same literals), so the post-scan
+  verification of an applied home-page title or description recommendation is expected to keep reporting it as still
+  present (inferred from the code, not exercised by a test). The Node-server path (Render, a VPS) injects the live content
+  into the HTML (`injectSeo()`) and does not have this gap. Whether search engines execute the JavaScript was not assessed.
+- **Deferred — stale-value guard (`base_value`); not implemented.** Beyond the content compare-and-swap, which protects
+  only the moment of the write, Apply does not check whether the live title or description changed after the
+  recommendation was created, so a later approval can overwrite a newer edit (the history allows restoring it). A guard
+  that compares `current_value` with the live content is not valid, for the reason above: on Vercel it would reject every
+  recommendation after the first CMS edit. The workable design is a nullable `base_value` column on
+  `seo_recommendations`, captured from the content row when the recommendation is created and compared per field in
+  Apply. It needs an additive schema change and a decision on what a stale recommendation becomes (an `approved` one can
+  only move to `applied` or `failed`); neither is approved, so nothing has been built. It would also not fix the
+  static-HTML problem above, which affects what the recommendation is based on in the first place.
 
 ## Settings (`.env` locally, your host's environment variables in production)
 
