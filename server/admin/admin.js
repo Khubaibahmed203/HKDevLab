@@ -670,7 +670,15 @@ function seoRecommendationCard(rec, reload) {
   applyBtn.onclick = async () => {
     if (!confirm(`Apply this ${rec.type} change to the live site now? This is saved with full version history and can be rolled back from Site content → History.`)) return;
     const x = await api('POST', `/api/admin/seo/recommendations/${rec.id}/apply`);
-    if (!x.ok) return toast(x.status === 501 ? 'This recommendation type needs to be implemented manually — it cannot be applied automatically.' : (x.data.error || 'Could not apply.'), true);
+    if (!x.ok) {
+      // a 501 on a title/description recommendation can only be a refused TARGET (another site, or not the home page) — those two types are supported
+      const manual = rec.type === 'title' || rec.type === 'description'
+        ? 'This recommendation is not about this site\'s home page, so it cannot be applied automatically — the site-wide title and description only take home-page recommendations.'
+        : 'This recommendation type needs to be implemented manually — it cannot be applied automatically.';
+      toast(x.status === 501 ? manual : (x.data.error || 'Could not apply.'), true);
+      if (x.status === 409 || x.status === 422) reload();   // the server has already moved this card on (or the content changed): show its real state, not a dead Apply button
+      return;
+    }
     toast('Applied — live on the site now.'); reload();
   };
   return h('article', { class: 'card' },
@@ -678,6 +686,7 @@ function seoRecommendationCard(rec, reload) {
     rec.current_value ? h('p', { class: 'meta' }, h('b', { text: 'Current: ' }), rec.current_value) : null,
     h('p', { class: 'msg', text: rec.proposed_value }),
     h('p', { class: 'meta', text: rec.reasoning }),
+    rec.status === 'failed' ? h('p', { class: 'meta', text: 'This recommendation can no longer be applied. A fresh recommendation may be needed — request one from an issue on the Issues tab.' }) : null,
     h('div', { class: 'row' }, rec.status === 'pending' ? [approveBtn, rejectBtn] : null, rec.status === 'approved' ? applyBtn : null));
 }
 

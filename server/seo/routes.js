@@ -199,6 +199,9 @@ export function createSeoRouter(store, { limiter }) {
       if (result.conflict) return res.status(409).json({ ok: false, error: result.error, recommendation: rec });
       const failed = await store.transitionRecommendation(rec.id, { from: 'approved', to: 'failed' });
       if (!failed) return lostTransition(res, rec.id, 'Only an approved recommendation can be applied');
+      // the field changed since this recommendation was drafted: nothing was written, and it can never be applied — recorded as failed (the same
+      // guarded transition a validation failure uses), but told apart from one by its 409 and `reason`, and from a compare-and-swap conflict above
+      if (result.stale) return res.status(409).json({ ok: false, reason: 'stale-value', error: result.error, recommendation: failed });
       return res.status(422).json({ ok: false, error: result.error, details: result.details });
     }
     const applied = await store.transitionRecommendation(rec.id, { from: 'approved', to: 'applied', applied: true });

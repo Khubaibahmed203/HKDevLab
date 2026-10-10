@@ -116,8 +116,11 @@ grow — once real service/blog/case-study pages exist, the sitemap becomes gene
   checks that the recommendation is about the configured home website and, if it names a page, that the page's stored
   URL is the home page `/` (a recommendation with no page stays applicable). The proposed value is then validated with
   `sanitizeContent()` and written with `saveContentIfVersion()` — a compare-and-swap on the content version read together
-  with the document — so it is validated and versioned like any admin edit; if the content changed in the meantime
-  nothing is written (409), the recommendation stays `approved`, and there is no automatic retry. Anything else — an
+  with the document — so it is validated and versioned like any admin edit. Two different refusals write nothing: if the
+  content changed *while* this request was running, the compare-and-swap loses (409), the recommendation stays `approved`,
+  and there is no automatic retry; if the one field it would change was edited *after the recommendation was created* (the
+  site's value no longer matches the `base_value` recorded then), the answer is a 409 with `reason: 'stale-value'` and the
+  recommendation is recorded as `failed`, because it can no longer be applied. Anything else — an
   unsupported type, or a recommendation about another website or page — returns "manual implementation required"
   (501) rather than an unsafe change, and also leaves the recommendation `approved`.
 
@@ -245,15 +248,17 @@ Phase 4 and were not audited.
   verification of an applied home-page title or description recommendation is expected to keep reporting it as still
   present (inferred from the code, not exercised by a test). The Node-server path (Render, a VPS) injects the live content
   into the HTML (`injectSeo()`) and does not have this gap. Whether search engines execute the JavaScript was not assessed.
-- **Deferred — stale-value guard (`base_value`); not implemented.** Beyond the content compare-and-swap, which protects
-  only the moment of the write, Apply does not check whether the live title or description changed after the
-  recommendation was created, so a later approval can overwrite a newer edit (the history allows restoring it). A guard
-  that compares `current_value` with the live content is not valid, for the reason above: on Vercel it would reject every
-  recommendation after the first CMS edit. The workable design is a nullable `base_value` column on
-  `seo_recommendations`, captured from the content row when the recommendation is created and compared per field in
-  Apply. It needs an additive schema change and a decision on what a stale recommendation becomes (an `approved` one can
-  only move to `applied` or `failed`); neither is approved, so nothing has been built. It would also not fix the
-  static-HTML problem above, which affects what the recommendation is based on in the first place.
+- **Stale-value guard (`base_value`) — implemented, with limits.** When a title or description recommendation is created,
+  the site's own value of that field is read from the content row and stored as `base_value` (never the crawled
+  `current_value`, which on Vercel is static build-time text); Apply then refuses the recommendation, writing nothing, if
+  that one field has changed since — unless the proposal is already live (see the Apply description above). What it does
+  not cover: recommendations created before the column existed have a NULL base and stay unguarded; a value changed away
+  and then back (A→B→A) passes; the base is captured when the recommendation is saved, not when the model read the page;
+  the stale reason is returned to the client (409, `reason: 'stale-value'`) but is not stored — the row only says
+  `failed`, exactly as for a validation failure; and the static-HTML problem above is unresolved, so it still affects what
+  a recommendation is based on in the first place. In a rare double request, the stale refusal can win the status change
+  against a request that had already written the same recommendation's content, leaving it `failed` although the history
+  shows it applied (inferred from the code, not exercised by a test; it overwrites no settled state).
 
 ## Settings (`.env` locally, your host's environment variables in production)
 

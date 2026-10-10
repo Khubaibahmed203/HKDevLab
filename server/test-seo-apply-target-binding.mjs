@@ -5,8 +5,9 @@
 // page must be the home page "/" of that website. Anything else gets the existing "manual implementation required" answer (HTTP 501): no
 // content read, no content write, no history entry, no status change — the recommendation stays approved. page_id = null stays applicable.
 //
-// NOT part of this step (deferred, see the Hardening #11 report): any comparison of the recommendation's current_value with the live content.
-// current_value is the crawled page's title/description, which on a static (Vercel) deployment is not guaranteed to equal content.seo.*.
+// NOT part of this step: any comparison of the recommendation's current_value with the live content. current_value is the crawled page's
+// title/description, which on a static (Vercel) deployment is not guaranteed to equal content.seo.* — so it is never used for that.
+// (The stale-value guard that came later compares a separately stored base_value instead: see test-seo-apply-stale-guard.mjs.)
 //
 // Everything is synthetic and local: websites are fake ".test" names, nothing is crawled and nothing touches the network.
 // Run: node server/test-seo-apply-target-binding.mjs
@@ -290,7 +291,7 @@ await routeSuite('pg-mem', makePgMem);
   ok('apply.js: the refusal is the existing manual result — the same literal, used exactly twice (unsupported type, wrong target), no new error', (applyCode.match(/manual implementation required/g) || []).length === 2 && /if \(!\(await targetsHomePage\(store, rec, homeWebsite\)\)\) return \{ ok: false, error: 'manual implementation required' \};/.test(applyCode));
   ok('apply.js: no transaction, no state transition, no status handling', !/transitionRecommendation|BEGIN|COMMIT|ROLLBACK/.test(applyCode) && !/status/.test(applySrc.replace(/\/\*[\s\S]*?\*\//g, '')));
   ok('apply.js: the page lookup happens only for a recommendation that names a page (a null page_id returns before it)', applyCode.indexOf('if (rec.page_id == null) return true;') > 0 && applyCode.indexOf('if (rec.page_id == null) return true;') < applyCode.indexOf('store.getPage('));
-  ok('apply.js: STALE-VALUE PROTECTION IS NOT IMPLEMENTED — current_value is never read or compared (deferred: it is not authoritative on a static deployment)', !/current_value|currentValue/.test(applyCode));
+  ok('apply.js: the stale-value guard compares the separately stored base_value (the site\'s own value when the recommendation was created) — the crawled current_value is never read or compared (it is not authoritative on a static deployment)', /rec\.base_value/.test(applyCode) && !/current_value|currentValue/.test(applyCode));
   const handler = routesCode.slice(routesCode.indexOf("router.post('/recommendations/:id/apply'"), routesCode.indexOf('return router;'));
   ok('routes.js: the apply handler passes the configured home website, resolved only after the 404 and "not approved" checks', /applyRecommendation\(store, rec, \{ userEmail: req\.user\.email, homeWebsite: await homeWebsite\(\) \}\)/.test(handler) && handler.indexOf("rec.status !== 'approved'") > 0 && handler.indexOf("rec.status !== 'approved'") < handler.indexOf('homeWebsite: await homeWebsite()'));
   ok('routes.js: the 501 mapping, the 409 conflict mapping and the failed transition are exactly as before', /if \(result\.error === 'manual implementation required'\) return res\.status\(501\)\.json\(\{ ok: false, error: result\.error, recommendation: rec \}\);/.test(handler) && /if \(result\.conflict\) return res\.status\(409\)/.test(handler) && (routesCode.match(/store\.transitionRecommendation\(/g) || []).length === 4);

@@ -148,6 +148,10 @@ export async function createStore({ pool } = {}) {
   for (const [column, type] of [
     ['verified_status', 'TEXT'], ['verified_at', 'TEXT'], ['verified_audit_id', 'BIGINT'],
   ]) await addColumn('seo_recommendations', column, type);
+  // Phase 4 (stale-value guard): the site's own seo.title / seo.description at the moment a title/description recommendation was
+  // created (see createRecommendation). Plain nullable TEXT, additive: rows that predate it, and every other type, stay NULL, and
+  // NULL means "no guard" — exactly the behaviour those rows always had.
+  await addColumn('seo_recommendations', 'base_value', 'TEXT');
   // Phase 4 Hardening #3: the site content row's revision counter (see saveContentIfVersion). Deliberately a plain nullable
   // INTEGER: rows that predate it are NULL (SQLite, PostgreSQL and pg-mem do not all back-fill a default), and every read
   // and write below treats NULL as version 0.
@@ -544,11 +548,20 @@ export async function createStore({ pool } = {}) {
     },
 
     /* AI recommendations — always start 'pending'; never applied without an explicit approve + apply call */
+    /** The ONE place every recommendation (the LLM path and the specialist path) is created. For a title or description recommendation it
+     *  also records `base_value`: the site's own value of that field, read from the content row right now — the same stored, sanitized
+     *  value Apply later compares against, so no normalization is involved. It is NOT `current_value`, which is whatever the crawler saw
+     *  (on a static deployment that is build-time HTML, not the CMS). No content row, no such field, or any other type: NULL = no guard. */
     async createRecommendation({ websiteId, issueId, pageId, type, currentValue, proposedValue, reasoning, aiProvider, aiModel }) {
       const at = now();
+      let baseValue = null;
+      if (type === 'title' || type === 'description') {
+        const live = (await this.getContent())?.data?.seo?.[type];
+        if (typeof live === 'string') baseValue = live;
+      }
       const id = await db.insert(
-        'INSERT INTO seo_recommendations (website_id,issue_id,page_id,type,current_value,proposed_value,reasoning,ai_provider,ai_model,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,\'pending\',?)',
-        [websiteId, issueId, pageId ?? null, type, currentValue ?? null, proposedValue ?? null, reasoning ?? null, aiProvider ?? null, aiModel ?? null, at]);
+        'INSERT INTO seo_recommendations (website_id,issue_id,page_id,type,current_value,base_value,proposed_value,reasoning,ai_provider,ai_model,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,\'pending\',?)',
+        [websiteId, issueId, pageId ?? null, type, currentValue ?? null, baseValue, proposedValue ?? null, reasoning ?? null, aiProvider ?? null, aiModel ?? null, at]);
       return this.getRecommendation(id);
     },
     async getRecommendation(id) { return recommendation((await db.all('SELECT * FROM seo_recommendations WHERE id = ?', [id]))[0]); },

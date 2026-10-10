@@ -33,6 +33,14 @@ export async function applyRecommendation(store, rec, { userEmail, homeWebsite }
     // The proposed value is already live in this one field: there is nothing to write (and no identical history entry to add).
     if (current.seo[rec.type] === value.seo[rec.type]) return { ok: true, unchanged: true };
 
+    // STALE VALUE: `base_value` is the site's own value of this one field when the recommendation was created (never the crawled
+    // `current_value`). If the field has changed since, this proposal was written against text that is no longer live — nothing is
+    // written. A NULL base (older rows, or none recorded) means no guard. Only this field is compared, so edits to anything else
+    // never block it. This is NOT the compare-and-swap conflict below (which is a race during this very request).
+    if (rec.base_value != null && current.seo[rec.type] !== rec.base_value) {
+      return { ok: false, stale: true, error: `The site's SEO ${rec.type} changed after this recommendation was drafted, so nothing was written. Generate a new recommendation from the Issues tab.` };
+    }
+
     const saved = await store.saveContentIfVersion(value, userEmail, `Applied AI SEO recommendation #${rec.id}`, version);
     if (!saved.ok) return { ok: false, conflict: true, error: 'The site content changed while this recommendation was being applied, so nothing was written. Review the current content, then apply it again if it still fits.' };
     return { ok: true };
