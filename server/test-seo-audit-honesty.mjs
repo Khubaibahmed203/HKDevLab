@@ -39,15 +39,31 @@ const withEnv = async (env, fn) => {
   try { return await fn(); } finally { for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
 };
 
+// fetch() (undici) refuses to connect to a short fixed list of ports — it fails with "bad port" before any connection — and the OS is free to hand one
+// of them to listen(0). These are the entries of that list that listen(0) can return (the ones below 1024 never come from an ephemeral range). Binding
+// is retried a bounded number of times on such a port, and ONLY the bind: no assertion, audit or scenario is ever retried.
+const FETCH_BLOCKED_PORTS = new Set([1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080]);
+const MAX_BIND_ATTEMPTS = 20;
+const bindLocal = async (server) => {
+  for (let attempt = 1; attempt <= MAX_BIND_ATTEMPTS; attempt++) {
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address();
+    if (!FETCH_BLOCKED_PORTS.has(port)) return port;
+    console.error(`[test] the OS assigned port ${port}, which fetch() refuses ("bad port") — binding again (attempt ${attempt} of ${MAX_BIND_ATTEMPTS})`);
+    await new Promise((r) => server.close(r));            // the rejected server is closed before the next attempt
+  }
+  throw new Error(`could not bind a local test server to a port fetch() accepts after ${MAX_BIND_ATTEMPTS} attempts`);
+};
+
 const sockets = new Set(), servers = [];
 const listen = async (handler) => {
   const server = http.createServer(handler);
   server.on('connection', (s) => sockets.add(s));
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = await bindLocal(server);
   servers.push(server);
-  return { server, host: `127.0.0.1:${server.address().port}`, base: `http://127.0.0.1:${server.address().port}/` };
+  return { server, host: `127.0.0.1:${port}`, base: `http://127.0.0.1:${port}/` };
 };
-const closedBase = async () => { const s = http.createServer(); await new Promise((r) => s.listen(0, '127.0.0.1', r)); const port = s.address().port; await new Promise((r) => s.close(r)); return `http://127.0.0.1:${port}/`; };
+const closedBase = async () => { const s = http.createServer(); const port = await bindLocal(s); await new Promise((r) => s.close(r)); return `http://127.0.0.1:${port}/`; };
 
 /* ═════════ a local site whose state can change between audits ═════════ */
 const words = (seed) => Array.from({ length: 70 }, (_, i) => `${seed}${i}`).join(' ');
