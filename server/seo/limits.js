@@ -18,9 +18,12 @@ const SITEMAP_FETCH_CAP = 15;           // MAX_SITEMAPS in sitemap.js — test-s
 const PAGESPEED_TIMEOUT_FACTOR = 1.5;   // the `requestTimeoutMs * 1.5` PageSpeed timeout in jobs.js — same drift guard
 const STALE_BUDGET_MARGIN = 1.5;
 
-/** Default: 1.5 × the worst-case header-wait budget of one scan (robots.txt + every sitemap fetch + every page at
- *  full timeout + PageSpeed) — 30 minutes with today's defaults. Body reads and DB writes have no configured cap,
- *  which is what the margin is for. SEO_STALE_AUDIT_MS overrides it, clamped to at least 60 seconds. */
+/** Default: 1.5 × the worst-case request budget of one scan (robots.txt + every sitemap fetch + every page at
+ *  full timeout + PageSpeed) — 30 minutes with today's defaults. Each of those timeouts covers the whole request, body
+ *  included (fetchBounded() in http.js; PageSpeed's timer runs until its body is parsed). Database writes and analysis
+ *  have no timeout configured in this application's code (a limit set outside it, such as on the database server, is
+ *  not visible from here), which is part of what the margin leaves room for. SEO_STALE_AUDIT_MS overrides it, clamped
+ *  to at least 60 seconds. */
 export function staleAuditMs() {
   const { maxPages, requestTimeoutMs, crawlDelayMs } = crawlLimits();
   const budgetMs = (1 + SITEMAP_FETCH_CAP) * requestTimeoutMs

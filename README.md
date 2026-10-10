@@ -195,9 +195,10 @@ every SEO table, including the async-job primitives (`claimAudit`/`activeAudit`)
 
 ### Known residual risks (recorded at Phase 4 closure)
 
-Phase 4 hardening (#1–#11A, up to commit `c91b7c59`) closed with the risks below known and accepted for the current
-single-site deployment (`hkdevlab.com`, served by Vercel). None of them blocked closure. Each is written down so it is
-not rediscovered later; anything that is only *inferred* from the code, rather than exercised by a test, says so.
+Phase 4 hardening (#1–#11A and the stale-value guard, implemented up to commit `1034c32`) closed with the risks below
+known and accepted for the current single-site deployment (`hkdevlab.com`, served by Vercel). None of them blocked
+closure. Each is written down so it is not rediscovered later; anything that is only *inferred* from the code, rather
+than exercised by a test, says so.
 
 That acceptance covers only this one operator-run site. It is **not** an approval to crawl third-party or
 customer-supplied domains, or to run this as a public multi-tenant SaaS: several of these risks (DNS rebinding above
@@ -259,6 +260,21 @@ Phase 4 and were not audited.
   a recommendation is based on in the first place. In a rare double request, the stale refusal can win the status change
   against a request that had already written the same recommendation's content, leaving it `failed` although the history
   shows it applied (inferred from the code, not exercised by a test; it overwrites no settled state).
+- **Vercel: a scan that is cut off stays `running` until stale recovery.** On Vercel a scan runs inside a function that
+  `vercel.json` limits to 30 seconds (`maxDuration`), with no detached worker (see "Async scan jobs" above), while a scan
+  is allowed far longer (up to 100 pages by default, plus PageSpeed). If the function ends or is frozen before the crawl
+  finishes, nothing marks the audit finished: polling only resumes an audit that is still `queued`, so the dashboard keeps
+  showing it as `running`. Only stale-audit recovery clears it, and it runs only as part of a `POST /scan` — never on a
+  poll, on a timer or at startup. Each such request checks first, but fails only the website's `queued`/`running` audits
+  whose `started_at` is older than the stale threshold (default: 30 minutes, derived as 1.5 × the worst-case scan budget
+  from the crawl limits; `SEO_STALE_AUDIT_MS` overrides it, see Settings; the effective threshold is never below 60
+  seconds). So until the audit is older than that, every `POST /scan` answers 409 ("already queued or running") and
+  nothing changes; the first request made after it fails the dead audit and queues a new one. Recovery only
+  marks the audit row `failed` — pages, issues and links the dead scan had already written are left as they are. A lower
+  `SEO_STALE_AUDIT_MS` shortens the wait, but it must stay above the longest scan that can really finish: a scan still
+  running when the threshold passes is failed as stale, and when it ends its completion is refused and its post-audit work
+  skipped. Inferred from the code and configuration, not exercised by a test; when Vercel ends or freezes a given
+  invocation is platform behaviour that was not assessed.
 
 ## Settings (`.env` locally, your host's environment variables in production)
 
@@ -273,6 +289,7 @@ Phase 4 and were not audited.
 | `ALLOWED_ORIGINS` | Only if the site is served from a different domain than the API. |
 | `NODE_ENV=production` | Enables HTTPS-only cookies and HSTS. Set it in production. |
 | `SEO_MAX_PAGES` `SEO_MAX_DEPTH` `SEO_REQUEST_TIMEOUT_MS` `SEO_CRAWL_DELAY_MS` | SEO crawler safety limits. All optional, sensible defaults (100 pages, depth 5, 10s timeout, 250ms delay). |
+| `SEO_STALE_AUDIT_MS` | Optional. Milliseconds a `queued`/`running` audit may sit before the next scan request fails it as stale (see "Known residual risks"). Default: derived from the crawl limits above — 30 minutes with their defaults. A value that is not a positive number falls back to that derived default. The effective threshold is never below 60000 (60 seconds): a smaller value is raised to 60000, and so is a derived default that would come out smaller (for example with very small crawl limits). Too low, and a scan that is still running is failed as stale. |
 | `ANTHROPIC_API_KEY` | Enables AI-drafted SEO recommendations. Without it, the SEO dashboard still crawls and reports issues — drafting a suggested fix just reports itself unavailable. |
 | `ANTHROPIC_MODEL` `SEO_LLM_TIMEOUT_MS` | Optional. Override the Anthropic model id (default `claude-sonnet-5`) and the AI-recommendation request timeout (default 20s). |
 | `PAGESPEED_API_KEY` | Optional real PageSpeed Insights performance scoring for the scanned homepage. Without it, performance is reported as unavailable, never a fabricated number. |
