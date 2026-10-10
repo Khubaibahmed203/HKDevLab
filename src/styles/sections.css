@@ -385,6 +385,7 @@
 .err { color: #ff9db0; font-size: .82rem; min-height: 0; } .err:empty { display: none; }
 .form__status { font-size: .92rem; color: var(--cyan); min-height: 1.4em; }
 .form__status[data-kind="error"] { color: #ff9db0; }
+.form .btn--block { width: calc(100% - 96px); }   /* leaves a slot for the mascot beside the Send button */
 .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
 .btn:disabled { opacity: .7; cursor: progress; transform: none; }
 

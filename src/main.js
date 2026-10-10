@@ -16,6 +16,7 @@ import { processScene } from './modules/process.js';
 import { buildWork, workScene } from './modules/work.js';
 import { initContact, contactReveal } from './modules/contact.js';
 import { motionPlan, initMotionUI } from './modules/motion.js';
+import { initMascot } from './modules/mascot.js';
 import { isWeakDevice, watchPerformance } from './modules/perf.js';
 import { applyContent } from './render.js';
 import defaults from '../content/default.json';
@@ -69,6 +70,7 @@ async function start() {
   const field = initField($('#field'), { animate: plan.on, lite: html.classList.contains('is-lite') });
   initChrome({ lenis, reduce: !plan.on });
   initMotionUI(plan);
+  initMascot({ animate: plan.on });
 
   buildWork(content.work.items.filter(isShown));      // the server already drops drafts; this also covers the offline fallback
   initContact(content.contact);
