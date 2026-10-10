@@ -385,7 +385,18 @@ server/   index.js · auth.js · db.js · content.js · mail.js · validate.js �
           crawl.js/analyzers.js are the original local-only rule-based checker, still used by its own tests)
 public/   brand/ (logos), robots.txt, sitemap.xml
 ```
-Tests: `node server/test-media.mjs` covers photo uploads (auth, type sniffing, size, serving, content validation) ·
+Tests: `npm test` runs the whole suite — every `server/test-*.mjs`, one at a time in alphabetical order, each in its own
+`node` process started from the repository root (`server/run-tests.mjs`; like the app it needs Node 22.13 or newer). It
+prints one line per file (`ok`, or `FAILED` / `NOSUMMARY` / `TIMEOUT` / … with the reason), then the totals, and exits
+non-zero if **any** file exits non-zero, is killed or runs past 5 minutes, prints no `N passed, M failed` summary line,
+reports a failed check, or reports no passed check at all. A problem file's stderr, its `FAIL` lines and the tail of its
+stdout are echoed under its line, and the complete stdout, stderr, exit code and duration of **every** file are saved to
+`hkdevlab-test-<timestamp>/` in the system temp folder (or the folder named by `TEST_RESULTS_DIR`), so a crash never
+loses its output. The totals count only files that printed a summary and say how many did not, so a run with a problem
+file is never presentable as a clean one. The runner removes `DATABASE_URL` from the test processes: the tests use
+SQLite and an in-memory PostgreSQL emulator (pg-mem), so the suite needs no database server — and says nothing about
+real-PostgreSQL concurrency. One file can still be run alone, e.g. `node server/test-seo.mjs`.
+Some of the files: `node server/test-media.mjs` covers photo uploads (auth, type sniffing, size, serving, content validation) ·
 `node server/test-pg.mjs` exercises the PostgreSQL code path (in-memory emulator), including the SEO tables ·
 `node server/test-google.mjs` runs the whole Google sign-in flow against a fake Google server (PKCE, state, nonce,
 invites, replays, tampering) · `node server/test-seo.mjs` covers the SEO metadata builder, the rule-based
