@@ -95,6 +95,7 @@ const vercelLike = http.createServer((req, res) => handler(req, res));
 await new Promise((res) => vercelLike.listen(8824, res));
 r = await new Client().req('http://localhost:8824', 'GET', '/api/health');
 ok('api/index.js handler serves /api/health', r.status === 200 && r.data.ok === true);
+ok('…and it reports only the database adapter name ("sqlite"), never the database file path', r.data.db === 'sqlite' && Object.values(r.data).every((v) => !String(v).includes(DB) && !String(v).includes(tmpdir()) && !String(v).includes('hk-serverless-test')), JSON.stringify(r.data));
 r = await new Client().req('http://localhost:8824', 'GET', '/admin');
 ok('…and /admin (the portal page)', r.status === 200);
 r = await new Client().req('http://localhost:8824', 'GET', '/admin/schema.js');

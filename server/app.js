@@ -88,8 +88,10 @@ export async function createApp() {
   const google = createGoogle(store, auth, { isProd: IS_PROD, hashIp, limiter });
 
   /* ───────────── health + public content ───────────── */
+  // Only the adapter name is public: store.kind for SQLite also carries the absolute path of the database file.
+  const publicDbName = (kind) => (kind === 'postgres' ? 'postgres' : String(kind).startsWith('sqlite') ? 'sqlite' : 'unknown');
   app.get('/api/health', async (req, res) => {
-    try { await store.ping(); res.json({ ok: true, db: store.kind, mail: mailer.live ? 'smtp' : 'console (SMTP not configured)' }); }
+    try { await store.ping(); res.json({ ok: true, db: publicDbName(store.kind), mail: mailer.live ? 'smtp' : 'console (SMTP not configured)' }); }
     catch { res.status(503).json({ ok: false }); }
   });
   app.get('/api/content', asyncH(async (req, res) => res.set('Cache-Control', 'no-cache').json((await site()).content)));
@@ -244,6 +246,9 @@ export async function createApp() {
       indexCache = { stamp: meta.updatedAt, html };
       return html;
     };
+    // dist/index.html is the raw build template (default metadata, unfilled content marker); the rendered page is `/`. Express answers HEAD through this GET route.
+    // A temporary (302) redirect for now; it must come before express.static, which would otherwise serve the template file at this path.
+    app.get('/index.html', (req, res) => res.redirect(302, '/'));
     app.use(express.static(dist, {
       index: false,
       setHeaders: (res, file) => res.set('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'),
