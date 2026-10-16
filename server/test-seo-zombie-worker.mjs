@@ -263,7 +263,11 @@ async function control(b) {
   const a = await store.createAuditIfNoneActive(site.id, { baseUrl: w.base, pagesPlanned: 10 });
   const calls = [];
   await executeScan(spyStore(store, calls), site.id, a.id, w.base);
-  ok(`[${label}] control: a healthy worker's store DOES see the write calls, the finish, verification and specialist calls (so the zombie's zero is meaningful)`, WRITES.every((m) => calls.includes(m)) && calls.includes('finishAudit') && POST_AUDIT.filter((m) => ['listUnverifiedApplied', 'listPages'].includes(m)).every((m) => calls.includes(m)), calls.join());
+  const healthy = WRITES.every((m) => calls.includes(m)) && calls.includes('finishAudit') && POST_AUDIT.filter((m) => ['listUnverifiedApplied', 'listPages'].includes(m)).every((m) => calls.includes(m));
+  // On a failure only: say which local port the crawl used and what the audit row says (an unobserved start page finishes it as 'failed' with the crawl's reason), read from the raw store so the spied calls are unchanged.
+  let detail = calls.join();
+  if (!healthy) { const row = await store.getAudit(a.id).catch(() => null); detail += `  [port ${new URL(w.base).port}; audit ${row ? `${row.status}: ${String(row.summary).slice(0, 300)}` : 'row unreadable'}]`; }
+  ok(`[${label}] control: a healthy worker's store DOES see the write calls, the finish, verification and specialist calls (so the zombie's zero is meaningful)`, healthy, detail);
 }
 
 /* ═════════ run ═════════ */
