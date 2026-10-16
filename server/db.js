@@ -41,6 +41,19 @@ async function sqliteAdapter() {
   };
 }
 
+// When an IDLE pooled client's connection fails (a database restart, a dropped network), pg-pool purges that client and then emits 'error' on the POOL itself.
+// An 'error' event with no listener is thrown, and on a long-running host (the Node/Render server) that ends the process. This listener only has to log: the
+// pool has already discarded the broken client. The line is built from the error's short code alone — pg error messages and error objects can carry user names
+// and connection details, so neither the message nor any other property is ever logged. One listener per pool, however often it is initialised.
+const guardedPools = new WeakSet();
+const safeErrorCode = (err) => (typeof err?.code === 'string' && /^[A-Za-z0-9_]{1,24}$/.test(err.code) ? err.code : 'unknown');
+export function guardPoolErrors(pool) {
+  if (!pool || typeof pool.on !== 'function' || guardedPools.has(pool)) return pool;
+  guardedPools.add(pool);
+  pool.on('error', (err) => console.error(`[db] a PostgreSQL connection failed while idle (${safeErrorCode(err)}); the pool discarded it and carries on`));
+  return pool;
+}
+
 async function pgAdapter(poolOrUrl) {
   let pool = poolOrUrl;
   if (typeof poolOrUrl === 'string') {
@@ -48,6 +61,7 @@ async function pgAdapter(poolOrUrl) {
     const local = /localhost|127\.0\.0\.1/.test(poolOrUrl);
     pool = new pg.Pool({ connectionString: poolOrUrl, ssl: local || process.env.PGSSL === 'disable' ? false : { rejectUnauthorized: false }, max: 5 });
   }
+  guardPoolErrors(pool);                     // the pool built above and any injected pool that supports .on()
   const numbered = (sql) => { let n = 0; return sql.replace(/\?/g, () => `$${++n}`); };
   return {
     kind: 'postgres', pk: 'BIGSERIAL PRIMARY KEY',
