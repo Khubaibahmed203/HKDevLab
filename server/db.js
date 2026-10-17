@@ -54,12 +54,23 @@ export function guardPoolErrors(pool) {
   return pool;
 }
 
+// TLS for a PostgreSQL URL. A remote database is reached over TLS that checks the server's certificate AND hostname (rejectUnauthorized stays on). Only a loopback
+// destination skips TLS, and "loopback" is judged on the host pg will actually dial — `?host=` or an empty host can change it — never by searching the URL text, so a
+// password, user or database name containing "localhost" cannot switch TLS off. Options written in the URL itself (sslmode=…, ssl=…) are applied by pg ON TOP of this
+// value and are deliberately left alone: on the installed pg 8, sslmode=require / verify-full / prefer / verify-ca keep full verification, while sslmode=no-verify,
+// sslmode=disable, ssl=0 and uselibpqcompat=true with prefer/require turn verification (or TLS itself) off — those stay the operator's explicit, visible choice.
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+function pgSslFor(pg, connectionString) {
+  let host;
+  try { host = new pg.Client({ connectionString }).host; } catch { /* unparseable: not loopback, so verified TLS; the pool reports the parse error at its first query */ }
+  return typeof host === 'string' && LOOPBACK_HOSTS.has(host.toLowerCase()) ? false : { rejectUnauthorized: true };
+}
+
 async function pgAdapter(poolOrUrl) {
   let pool = poolOrUrl;
   if (typeof poolOrUrl === 'string') {
     const { default: pg } = await import('pg');
-    const local = /localhost|127\.0\.0\.1/.test(poolOrUrl);
-    pool = new pg.Pool({ connectionString: poolOrUrl, ssl: local || process.env.PGSSL === 'disable' ? false : { rejectUnauthorized: false }, max: 5 });
+    pool = new pg.Pool({ connectionString: poolOrUrl, ssl: pgSslFor(pg, poolOrUrl), max: 5 });
   }
   guardPoolErrors(pool);                     // the pool built above and any injected pool that supports .on()
   const numbered = (sql) => { let n = 0; return sql.replace(/\?/g, () => `$${++n}`); };
