@@ -97,7 +97,15 @@ export async function createApp() {
   app.get('/api/content', asyncH(async (req, res) => res.set('Cache-Control', 'no-cache').json((await site()).content)));
 
   /* ───────────── contact form ───────────── */
-  app.post('/api/contact', express.json({ limit: '20kb' }), asyncH(async (req, res) => {
+  // Vercel sets VERCEL_ENV to production | preview | development (NODE_ENV is "production" on all three, so it cannot tell a Preview apart); it is absent on Render, a VPS and
+  // local runs, which therefore behave exactly as before. A Preview/Development deployment must never store or email a real visitor's details, so anything but "production" is
+  // refused here — FIRST, before the body is parsed, the rate limiter is touched or anything is validated, stored or mailed — with an honest error (not a fake success). Nothing is logged.
+  const contactDisabledOnPreview = (req, res, next) => {
+    const env = process.env.VERCEL_ENV;
+    if (!env || env === 'production') return next();
+    res.status(503).set('Cache-Control', 'no-store').json({ ok: false, error: 'Contact submissions are disabled on preview deployments. Nothing was saved or sent.' });
+  };
+  app.post('/api/contact', contactDisabledOnPreview, express.json({ limit: '20kb' }), asyncH(async (req, res) => {
     if (!originAllowed(req)) return res.status(403).json({ ok: false, error: 'Forbidden.' });
 
     const ipHash = hashIp(req.ip);
