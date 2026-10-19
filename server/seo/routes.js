@@ -1,6 +1,6 @@
 import express from 'express';
 import { siteOrigin } from '../../content/seo.js';
-import { queueScan, ensureProgressing, compareToPreviousAudit } from './jobs.js';
+import { queueScan, ensureProgressing, refreshAudit, compareToPreviousAudit } from './jobs.js';
 import { generateRecommendation } from './recommendations.js';
 import { applyRecommendation } from './apply.js';
 
@@ -88,7 +88,9 @@ export function createSeoRouter(store, { limiter }) {
   // must come before /scans/:id, or Express would try to parse "latest" as a numeric audit id
   router.get('/scans/latest', asyncH(async (req, res) => {
     const website = await homeWebsite();
-    const audit = await ensureProgressing(store, await store.latestAudit(website.id));
+    // read-only: the overview must never start a crawl (on Vercel that would be a request running for up to the whole scan budget). It only ends an audit that
+    // has outlived any live worker; running a queued scan is GET /scans/:id's job.
+    const audit = await refreshAudit(store, await store.latestAudit(website.id));
     res.json({ audit: await auditWithExtras(audit) });
   }));
 

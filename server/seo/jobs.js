@@ -1,7 +1,7 @@
 import { crawlWebsite } from './crawler.js';
 import { analyzePages } from './pageAnalyzer.js';
 import { scoreFromIssues } from './analyzers.js';   // Phase 1's pure severity-weighted scorer — unchanged, reused as-is
-import { crawlLimits, staleAuditMs } from './limits.js';
+import { crawlLimits, crawlDeadlineReserveMs, onServerless, recoveryThresholdMs, scanBudgetMs } from './limits.js';
 import { fetchPageSpeed } from './pagespeed.js';
 import { runOnPageSpecialistIntegration } from './specialistIntegration.js';
 
@@ -16,11 +16,15 @@ import { runOnPageSpecialistIntegration } from './specialistIntegration.js';
  * (see the contact-form mailer's comment in server/app.js) — a bare `setImmediate` kick can lose that race.
  * So progress is guaranteed two ways, and claimAudit() (an atomic 'queued'→'running' compare-and-swap in
  * server/db.js) makes it safe for both to race on the same audit:
- *   1. queueScan() fires the crawl in the background (setImmediate) — normally wins on a long-running server.
- *   2. Every poll route calls ensureProgressing(): if an audit is STILL 'queued' when someone asks about it,
- *      it runs the crawl right there, inline, before answering. On serverless this is what actually finishes
- *      the job — the first poll after POST /scan does the real work. Once a scan is 'running' or done,
- *      ensureProgressing() is a cheap no-op read.
+ *   1. queueScan() fires the crawl in the background (setImmediate) — on a server that keeps running. NOT on Vercel
+ *      (Phase 5 D4.1): there a worker that had claimed its audit could be frozen with the response and leave it
+ *      'running' with nobody on it, so no scan work is ever started detached.
+ *   2. GET /scans/:id calls ensureProgressing(): if the audit is STILL 'queued' when someone asks about it, it runs
+ *      the crawl right there, inline, before answering. On Vercel this is what runs every scan — the first poll after
+ *      POST /scan does the real work, inside a live request, under the scan's execution budget (limits.js). Once a
+ *      scan is 'running' or done, ensureProgressing() is a cheap read. GET /scans/latest never runs a scan.
+ * An audit whose worker is gone (the function was stopped) cannot reach a terminal status by itself, so both poll routes
+ * also fail an audit that has been queued/running for longer than recoveryThresholdMs() — see refreshAudit().
  */
 export const STALE_AUDIT_SUMMARY = 'Marked failed by stale-audit recovery: this scan never recorded a completion, so it was presumed interrupted (restart, timeout or crash).';
 
@@ -29,7 +33,7 @@ export const STALE_AUDIT_SUMMARY = 'Marked failed by stale-audit recovery: this 
  *  atomic UPDATE. Never throws: if the sweep itself fails, the normal active-audit check still runs unchanged. */
 async function recoverStaleAudits(store, websiteId) {
   try {
-    const cutoff = new Date(Date.now() - staleAuditMs()).toISOString();
+    const cutoff = new Date(Date.now() - recoveryThresholdMs()).toISOString();
     const recovered = await store.failStaleAudits(websiteId, { cutoff, summary: STALE_AUDIT_SUMMARY });
     if (recovered > 0) console.error(`[seo] recovered ${recovered} stale audit(s) for website #${websiteId} (queued/running past the stale threshold)`);
   } catch (err) {
@@ -46,9 +50,12 @@ export async function queueScan(store, website, { baseUrl } = {}) {
   await recoverStaleAudits(store, website.id);
   const audit = await store.createAuditIfNoneActive(website.id, { baseUrl, pagesPlanned: limits.maxPages });
   if (!audit) return null;
-  setImmediate(() => {
-    executeScan(store, website.id, audit.id, baseUrl).catch((err) => console.error('[seo] background scan failed:', err.message));
-  });
+  // Detached work only where the process is known to keep running. On Vercel the audit stays 'queued' and the first poll runs it (ensureProgressing).
+  if (!onServerless()) {
+    setImmediate(() => {
+      executeScan(store, website.id, audit.id, baseUrl).catch((err) => console.error('[seo] background scan failed:', err.message));
+    });
+  }
   return audit;
 }
 
@@ -75,8 +82,13 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
 
   const limits = crawlLimits();
   const startedAt = Date.now();
+  // The execution budget (limits.js): null on a server that keeps running — no deadline at all, exactly as before. On Vercel it keeps a scan inside its function's
+  // time limit. It is enforced where this code controls the clock — every request the crawl makes, and PageSpeed. It cannot interrupt a database write or the
+  // analysis, which is why the crawl's deadline stops short of the budget (crawlDeadlineReserveMs) and why a hard stop of the function is still possible.
+  const budgetMs = scanBudgetMs();
+  const deadlineAt = budgetMs ? startedAt + budgetMs : null;
   try {
-    const crawl = await crawlWebsite(baseUrl, limits);
+    const crawl = await crawlWebsite(baseUrl, { ...limits, deadlineAt: deadlineAt ? deadlineAt - crawlDeadlineReserveMs(budgetMs) : null });
 
     // Ownership: the crawl can take minutes, and stale recovery may have failed this audit while it ran (a newer audit may already be
     // writing). A worker that no longer owns its audit stops here and records nothing. This is NOT the correctness boundary — the
@@ -86,6 +98,14 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
     if (!owned || owned.status !== 'running') {
       console.error(`[seo] audit #${auditId} was already recovered as stale before this scan could record its crawl (status: ${owned?.status ?? 'missing'}) — writing nothing and skipping all post-audit work`);
       return;
+    }
+
+    // The crawl ran out of its time budget before it was done: what it saw is a fragment of the site, and a score computed from a fragment would claim a coverage
+    // nobody checked. So the audit FAILS — it is never completed — through the same one failure path as below, and nothing from this crawl is recorded.
+    if (crawl.timedOut) {
+      throw Object.assign(
+        new Error(`The scan ran out of its ${Math.round(budgetMs / 1000)}-second time budget after ${crawl.pages.length} page(s), so no results were recorded for this scan. Scan fewer pages (SEO_MAX_PAGES) or run it on a server without a short time limit.`),
+        { pagesCrawled: crawl.pages.length, errorsCount: crawl.errors.length });
     }
 
     // Audit honesty: if the start page was never observed there is nothing true to report. Fail the scan through the catch below — the
@@ -120,8 +140,12 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
     const issuesWithPageIds = issues.map((it) => ({ ...it, pageId: it.pageUrl ? urlToPageId.get(it.pageUrl) ?? null : null }));
     if (issuesWithPageIds.length) await store.createIssues(websiteId, auditId, issuesWithPageIds);
 
-    // best-effort, never blocks or fails the scan — see server/seo/pagespeed.js
-    const pagespeed = await fetchPageSpeed(crawl.pages[0]?.finalUrl || baseUrl, { timeoutMs: limits.requestTimeoutMs * 1.5 }).catch(() => ({ available: false, reason: 'request failed' }));
+    // best-effort, never blocks or fails the scan — see server/seo/pagespeed.js. Under a budget it may only use what is left of it (and is skipped when almost
+    // nothing is), so a slow PageSpeed answer cannot carry the scan past its function's time limit. With no budget the timeout is the one it always was.
+    const timeLeft = deadlineAt ? deadlineAt - Date.now() : Infinity;
+    const pagespeed = timeLeft < 1500
+      ? { available: false, reason: 'skipped: the scan time budget was used up' }
+      : await fetchPageSpeed(crawl.pages[0]?.finalUrl || baseUrl, { timeoutMs: Math.min(limits.requestTimeoutMs * 1.5, timeLeft - 500) }).catch(() => ({ available: false, reason: 'request failed' }));
 
     // Phase 3 Step 4P-E: the one approved, audit-level performance issue. This MUST run here, after
     // fetchPageSpeed() resolves — analyzePages()/createIssues() above already ran before PageSpeed existed,
@@ -169,11 +193,24 @@ export async function executeScan(store, websiteId, auditId, baseUrl) {
   }
 }
 
-/** Poll-time safety net (see the module comment above). A cheap no-op unless the audit is still 'queued'. */
+/** Poll-time safety net (see the module comment above), for GET /scans/:id — the request that is allowed to do the work. First it fails an audit that has
+ *  outlived any live worker (refreshAudit); then, if the audit is still 'queued', it runs the crawl inline. A cheap read otherwise. */
 export async function ensureProgressing(store, audit) {
+  audit = await refreshAudit(store, audit);
   if (!audit || audit.status !== 'queued') return audit;
   await executeScan(store, audit.website_id, audit.id, audit.base_url);
   return store.getAudit(audit.id);
+}
+
+/** The read-only half, for GET /scans/latest (an overview that must never start a crawl): returns the audit as it is NOW, after failing it if it has been
+ *  queued/running for longer than recoveryThresholdMs() — the same one atomic sweep POST /scan runs. That only ends an audit nobody can still be working on;
+ *  a fresh one is left alone, and nothing is ever restarted, so a recovery can never create a second owner of an audit. */
+export async function refreshAudit(store, audit) {
+  if (!audit || (audit.status !== 'queued' && audit.status !== 'running')) return audit;
+  const age = Date.now() - new Date(audit.started_at).getTime();
+  if (!(age >= recoveryThresholdMs())) return audit;      // fresh — or a date that cannot be read: leave it alone
+  await recoverStaleAudits(store, audit.website_id);
+  return (await store.getAudit(audit.id)) ?? audit;
 }
 
 /** The one issue-identity signature used everywhere two audits' issues need to be compared: same type on the

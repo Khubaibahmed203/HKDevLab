@@ -16,14 +16,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * destination is refused before any request is made. It produces structured facts only — no analysis, no opinions,
  * nothing written anywhere.
  */
-export async function crawlWebsite(startUrl, { maxPages = 100, maxDepth = 5, requestTimeoutMs = 10_000, crawlDelayMs = 250, userAgent = CRAWLER_USER_AGENT } = {}) {
+export async function crawlWebsite(startUrl, { maxPages = 100, maxDepth = 5, requestTimeoutMs = 10_000, crawlDelayMs = 250, userAgent = CRAWLER_USER_AGENT, deadlineAt = null } = {}) {
   const normalizedStart = normalizeUrl(startUrl, startUrl);
   if (!normalizedStart) throw new Error(`Not a valid http(s) URL: ${startUrl}`);
   const origin = new URL(normalizedStart).origin;
   const allowedHost = new URL(normalizedStart).host;
 
-  const robots = await fetchRobots(origin, { timeoutMs: requestTimeoutMs, userAgent });
-  const sitemaps = await discoverSitemaps(origin, robots.sitemaps, { timeoutMs: requestTimeoutMs, userAgent, allowedHost });
+  // An optional deadline (epoch ms), from the caller's scan budget: no request here runs past it, no new page is started once almost nothing is left, and the
+  // crawl then reports `timedOut` — what it saw is a fragment, so the caller must not treat it as a finished crawl. It bounds the network work done in this
+  // function only; it cannot reach the caller's database writes or analysis. With no deadline (null) every line below behaves exactly as it always did.
+  const left = () => (deadlineAt == null ? Infinity : deadlineAt - Date.now());
+  const MIN_STEP_MS = 250;
+  const within = (ms) => Math.max(1, Math.min(ms, left()));
+  const pause = () => (crawlDelayMs ? sleep(Math.min(crawlDelayMs, Math.max(0, left()))) : null);
+  let timedOut = false;
+
+  const robots = await fetchRobots(origin, { timeoutMs: within(requestTimeoutMs), userAgent });
+  const sitemaps = await discoverSitemaps(origin, robots.sitemaps, { timeoutMs: within(requestTimeoutMs), userAgent, allowedHost, deadlineAt });
 
   const queue = [{ url: normalizedStart, depth: 0 }];
   const seen = new Set([normalizedStart]);
@@ -32,6 +41,7 @@ export async function crawlWebsite(startUrl, { maxPages = 100, maxDepth = 5, req
   const errors = [];
 
   while (queue.length && pages.length < maxPages) {
+    if (left() < MIN_STEP_MS) { timedOut = true; break; }
     const { url, depth } = queue.shift();
 
     if (!isAllowed(new URL(url).pathname, robots)) {
@@ -44,14 +54,18 @@ export async function crawlWebsite(startUrl, { maxPages = 100, maxDepth = 5, req
     // streams without end becomes an ordinary page error below instead of hanging the scan. The body is only read for HTML.
     const t0 = Date.now();
     let res, fetchError = null;
-    try { res = await fetchBounded(url, { timeoutMs: requestTimeoutMs, userAgent, maxBytes: htmlMaxBytes(), readBody: (r) => /text\/html/i.test(r.headers.get('content-type') || '') }); }
-    catch (err) { fetchError = err.code === 'REQUEST_TIMEOUT' ? `timed out after ${requestTimeoutMs}ms` : (err.message || 'fetch failed'); }
+    const allowed = within(requestTimeoutMs);     // the usual per-request timeout, shortened only when the deadline is nearer
+    try { res = await fetchBounded(url, { timeoutMs: allowed, userAgent, maxBytes: htmlMaxBytes(), readBody: (r) => /text\/html/i.test(r.headers.get('content-type') || '') }); }
+    catch (err) {
+      fetchError = err.code === 'REQUEST_TIMEOUT' ? `timed out after ${allowed}ms` : (err.message || 'fetch failed');
+      if (err.code === 'REQUEST_TIMEOUT' && allowed < requestTimeoutMs) timedOut = true;   // cut short by the deadline, not by the page being slow: not a page error
+    }
     const responseTimeMs = fetchError ? Date.now() - t0 : res.ttfbMs;   // as before: how long the server took to answer, not how long the body took to arrive
 
     if (fetchError) {
       pages.push({ url, finalUrl: url, depth, statusCode: null, contentType: null, responseTimeMs, htmlSize: 0, error: fetchError });
       errors.push({ url, error: fetchError });
-      if (crawlDelayMs) await sleep(crawlDelayMs);
+      await pause();
       continue;
     }
 
@@ -77,8 +91,8 @@ export async function crawlWebsite(startUrl, { maxPages = 100, maxDepth = 5, req
       }
     }
     pages.push(page);
-    if (crawlDelayMs) await sleep(crawlDelayMs);
+    await pause();
   }
 
-  return { origin, allowedHost, robots, sitemaps, pages, links, errors, truncated: queue.length > 0 };
+  return { origin, allowedHost, robots, sitemaps, pages, links, errors, truncated: queue.length > 0, timedOut };
 }

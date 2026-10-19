@@ -165,13 +165,26 @@ two deployment targets behave differently, deliberately:
   the background via `setImmediate` right after the row is written. The process keeps running after the
   response is sent, so this genuinely executes off the request — it is real (if lightweight) background
   execution, not a fallback.
-- **Vercel serverless** (`api/index.js`): a function can freeze the instant it responds, so nothing guarantees
-  that `setImmediate` callback ever gets to run — there is **no detached background worker** here, and this
-  code makes no claim otherwise. What actually finishes the job is `ensureProgressing()`, called by every poll
-  route (`GET /scans/:id`, `GET /scans/latest`): if an audit is still `queued` when polled, it runs the crawl
-  **inline, in that GET request**, as a controlled fallback, before answering. The trade-off is explicit: the
-  first poll after `POST /scan` is slower on serverless (it does the real work); every poll after that is a
-  cheap read.
+- **Vercel serverless** (`api/index.js`): a function can freeze the instant it responds, so there is **no detached
+  background worker** here, and no scan work is ever started detached: when `VERCEL` is set, `queueScan()` does not
+  call `setImmediate` at all (a worker that had claimed its audit and was then frozen would leave it `running` with
+  nobody on it). What runs the scan is `ensureProgressing()`, called by `GET /scans/:id` (the poll the admin runs
+  right after `POST /scan`): if the audit is still `queued`, it runs the crawl **inline, in that request**, before
+  answering. The trade-off is explicit: that first poll is slower (it does the real work); every poll after it is a
+  cheap read. `GET /scans/latest` (the overview) is read-only and never starts a crawl.
+  - **Execution budget.** The function has 30 s (`vercel.json`), so on Vercel one scan gets **20 s** from the moment it
+    starts (`SEO_SCAN_BUDGET_MS` sets it, here or on any host; at least 1 s). Every robots.txt, sitemap and page
+    request — and PageSpeed — is cut off at that budget, the crawl keeps 5 s back for the database writes that follow,
+    and a scan that cannot finish inside it **fails** (it is never completed on a partial crawl) with a summary saying
+    so and nothing recorded from it; scan fewer pages (`SEO_MAX_PAGES`) or use a host without a short time limit. The
+    budget does **not** interrupt a database write or the analysis, so a function can still be stopped by the platform.
+  - **Orphans.** An audit that has been `queued`/`running` for longer than three budgets (60 s on Vercel; an explicit
+    `SEO_STALE_AUDIT_MS` always wins, and a host with no budget keeps `staleAuditMs()`) has lost its worker, so
+    both poll routes now fail it with the stale-recovery summary — not only the next `POST /scan` — and the website
+    can be scanned again. A recovery only ever ends an audit; nothing is restarted, so it never creates a second
+    owner, and a worker that wakes up later is stopped by the existing ownership checks.
+  - Not verified: how Vercel behaves in production (freezing, the effective time limit of the plan). Run one scan on
+    a Preview deployment and read the function logs before relying on this.
 
 Both paths funnel through the same `executeScan()`, guarded by `claimAudit()` — an atomic `queued`→`running`
 compare-and-swap in `server/db.js` (a single `UPDATE ... WHERE status = 'queued'`). Whichever of the background
@@ -210,8 +223,8 @@ public address first and a private one second); that would need connection-time 
 
 Routes, all under `/api/admin/seo/*` behind the same auth/CSRF/rate-limiting as the rest of `/api/admin`:
 `POST /scan` (queues a job; optionally `{ websiteId, baseUrl }`) → 202, `GET /scans`, `GET /scans/latest`,
-`GET /scans/:id` (both polled — auto-advances a still-queued job and attaches `issueCount`/`comparison` once
-complete), `GET /pages`, `GET /issues` (filter by `severity`/`status`/`type`/`pageId`),
+`GET /scans/:id` (the poll — runs a still-queued job and attaches `issueCount`/`comparison` once complete;
+`GET /scans/latest` attaches the same extras but only reads, and fails an orphaned audit), `GET /pages`, `GET /issues` (filter by `severity`/`status`/`type`/`pageId`),
 `POST /issues/:id/recommend`, `GET /recommendations`, `POST /recommendations/:id/approve|reject|apply`.
 
 Data lives in `websites`/`pages`/`seo_audits`/`seo_issues`/`page_links`/`seo_recommendations` — every table
@@ -294,21 +307,34 @@ Phase 4 and were not audited.
   a recommendation is based on in the first place. In a rare double request, the stale refusal can win the status change
   against a request that had already written the same recommendation's content, leaving it `failed` although the history
   shows it applied (inferred from the code, not exercised by a test; it overwrites no settled state).
-- **Vercel: a scan that is cut off stays `running` until stale recovery.** On Vercel a scan runs inside a function that
-  `vercel.json` limits to 30 seconds (`maxDuration`), with no detached worker (see "Async scan jobs" above), while a scan
-  is allowed far longer (up to 100 pages by default, plus PageSpeed). If the function ends or is frozen before the crawl
-  finishes, nothing marks the audit finished: polling only resumes an audit that is still `queued`, so the dashboard keeps
-  showing it as `running`. Only stale-audit recovery clears it, and it runs only as part of a `POST /scan` — never on a
-  poll, on a timer or at startup. Each such request checks first, but fails only the website's `queued`/`running` audits
-  whose `started_at` is older than the stale threshold (default: 30 minutes, derived as 1.5 × the worst-case scan budget
-  from the crawl limits; `SEO_STALE_AUDIT_MS` overrides it, see Settings; the effective threshold is never below 60
-  seconds). So until the audit is older than that, every `POST /scan` answers 409 ("already queued or running") and
-  nothing changes; the first request made after it fails the dead audit and queues a new one. Recovery only
-  marks the audit row `failed` — pages, issues and links the dead scan had already written are left as they are. A lower
+- **Vercel: a scan that is cut off stays `running` until a request recovers it.** On Vercel a scan runs inside a function
+  that `vercel.json` limits to 30 seconds (`maxDuration`), with no detached worker (see "Async scan jobs" above). A scan
+  gets a 20-second budget there, and one that cannot finish inside it fails instead of being cut off — but that budget
+  covers only the crawl's own requests and PageSpeed. It does **not** cover the database writes and analysis that follow the
+  crawl, the work after the audit completes, or the time spent before the scan starts (a cold start, the database
+  connection, sign-in), so it does **not** guarantee that the whole invocation finishes inside 30 seconds. If the platform
+  still ends or freezes the function before the audit is marked finished, nothing marks it: polling only runs an audit
+  that is still `queued`, so the dashboard keeps showing it as `running` (or as `queued`, if nobody ever polled it).
+  Stale-audit recovery is **request-triggered, not automatic**. It runs when one of three requests arrives — `POST /scan`,
+  `GET /scans/:id` or `GET /scans/latest` — and never on a background timer or at startup (startup only repairs a website
+  that already has two active audits, keeping the newest; that is not stale recovery). Each such request checks first, but
+  fails only the website's `queued`/`running` audits whose `started_at` is older than the stale threshold. `started_at` is
+  the moment the audit was **created**, so any time it spent waiting as `queued` counts. The threshold:
+  - **On Vercel the default is 60 seconds** — three scan budgets (3 × 20 s), never below the 60-second minimum or above the
+    30-minute default.
+  - **An explicit `SEO_STALE_AUDIT_MS` overrides it** (see Settings; never below 60 seconds).
+  - **Other hosts keep the 30-minute default** (1.5 × the worst-case scan budget from the crawl limits). Setting
+    `SEO_SCAN_BUDGET_MS` there applies the same three-budget rule.
+
+  Until the audit is older than the threshold, `POST /scan` answers 409 ("already queued or running") and nothing changes;
+  the first request made after it fails the dead audit (a `POST /scan` then also queues a new one). **If no request is made,
+  a `queued` or `running` audit can stay in that state indefinitely** — nothing else ever moves it. Recovery only marks the
+  audit row `failed` — pages, issues and links the dead scan had already written are left as they are. A lower
   `SEO_STALE_AUDIT_MS` shortens the wait, but it must stay above the longest scan that can really finish: a scan still
-  running when the threshold passes is failed as stale, and when it ends its completion is refused and its post-audit work
-  skipped. Inferred from the code and configuration, not exercised by a test; when Vercel ends or freezes a given
-  invocation is platform behaviour that was not assessed.
+  running when the threshold passes — including one first polled long after its `POST /scan` — is failed as stale, and
+  when it ends its completion is refused and its post-audit work skipped. The recovery rules are exercised by
+  `server/test-seo-serverless-liveness.mjs` on SQLite, with Vercel simulated through the `VERCEL` environment variable;
+  when Vercel itself ends or freezes a given invocation is platform behaviour that was not assessed.
 
 ## Settings (`.env` locally, your host's environment variables in production)
 
@@ -323,7 +349,7 @@ Phase 4 and were not audited.
 | `ALLOWED_ORIGINS` | Only if the site is served from a different domain than the API. |
 | `NODE_ENV=production` | Enables HTTPS-only cookies and HSTS. Set it in production. |
 | `SEO_MAX_PAGES` `SEO_MAX_DEPTH` `SEO_REQUEST_TIMEOUT_MS` `SEO_CRAWL_DELAY_MS` | SEO crawler safety limits. All optional, sensible defaults (100 pages, depth 5, 10s timeout, 250ms delay). |
-| `SEO_STALE_AUDIT_MS` | Optional. Milliseconds a `queued`/`running` audit may sit before the next scan request fails it as stale (see "Known residual risks"). Default: derived from the crawl limits above — 30 minutes with their defaults. A value that is not a positive number falls back to that derived default. The effective threshold is never below 60000 (60 seconds): a smaller value is raised to 60000, and so is a derived default that would come out smaller (for example with very small crawl limits). Too low, and a scan that is still running is failed as stale. |
+| `SEO_STALE_AUDIT_MS` | Optional. Milliseconds a `queued`/`running` audit may sit (counted from when it was created) before a request fails it as stale — `POST /scan`, `GET /scans/:id` or `GET /scans/latest`; nothing recovers it on a timer or at startup (see "Known residual risks"). Default: derived from the crawl limits above — 30 minutes with their defaults — except on Vercel (or wherever `SEO_SCAN_BUDGET_MS` is set), where it is three scan budgets: 60 seconds at the default 20-second budget. A value that is not a positive number falls back to that default. The effective threshold is never below 60000 (60 seconds): a smaller value is raised to 60000, and so is a derived default that would come out smaller (for example with very small crawl limits). Too low, and a scan that is still running is failed as stale. |
 | `ANTHROPIC_API_KEY` | Enables AI-drafted SEO recommendations. Without it, the SEO dashboard still crawls and reports issues — drafting a suggested fix just reports itself unavailable. |
 | `ANTHROPIC_MODEL` `SEO_LLM_TIMEOUT_MS` | Optional. Override the Anthropic model id (default `claude-sonnet-5`) and the AI-recommendation request timeout (default 20s). |
 | `PAGESPEED_API_KEY` | Optional real PageSpeed Insights performance scoring for the scanned homepage. Without it, performance is reported as unavailable, never a fabricated number. |

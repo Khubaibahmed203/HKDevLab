@@ -31,3 +31,35 @@ export function staleAuditMs() {
     + requestTimeoutMs * PAGESPEED_TIMEOUT_FACTOR;
   return Math.max(MIN_STALE_AUDIT_MS, int(process.env.SEO_STALE_AUDIT_MS, Math.round(budgetMs * STALE_BUDGET_MARGIN)));
 }
+
+/* ───────────── serverless (Phase 5 D4.1): an execution budget for one scan, and the recovery threshold that matches it ───────────── */
+
+/** True on Vercel, which sets VERCEL in every function. Read at call time, like every other variable in this file. */
+export const onServerless = () => !!process.env.VERCEL;
+
+// vercel.json gives the function 30 s. Request handling, the database writes after the crawl and PageSpeed (itself capped by what is left) need a share
+// of that, so a scan gets 20 s from the moment it starts. A scan that cannot finish inside its budget is FAILED honestly — never completed partly.
+const SERVERLESS_SCAN_BUDGET_MS = 20_000;
+const MIN_SCAN_BUDGET_MS = 1_000;
+const WRITE_RESERVE_MS = 5_000;
+
+/** How long ONE scan may take, from its start to its terminal status — or null for no limit (a server that keeps running, which is how it always worked).
+ *  The default is 20 s on Vercel and none elsewhere; SEO_SCAN_BUDGET_MS sets it anywhere (at least 1 s). The budget is enforced where this application
+ *  controls the clock: every robots.txt, sitemap and page request, and PageSpeed. It cannot interrupt a database write or the analysis that follows the crawl. */
+export function scanBudgetMs() {
+  const set = int(process.env.SEO_SCAN_BUDGET_MS, 0);
+  if (set) return Math.max(MIN_SCAN_BUDGET_MS, set);
+  return onServerless() ? SERVERLESS_SCAN_BUDGET_MS : null;
+}
+
+/** The part of a budget the crawl deadline leaves for what it cannot interrupt: the database writes (and the analysis) after the crawl. */
+export const crawlDeadlineReserveMs = (budgetMs) => Math.min(WRITE_RESERVE_MS, Math.round(budgetMs * 0.25));
+
+/** When a queued or running audit counts as abandoned, for the poll routes as well as POST /scan. Without a scan budget that is staleAuditMs(), as ever:
+ *  a worst-case crawl on a server that keeps running. With one, no live worker can still be on the audit long after the budget (the function is stopped by
+ *  then), so it is three budgets — never under the 60 s minimum, never above staleAuditMs(). An explicit SEO_STALE_AUDIT_MS always wins. */
+export function recoveryThresholdMs() {
+  const budgetMs = scanBudgetMs();
+  if (!budgetMs || int(process.env.SEO_STALE_AUDIT_MS, 0)) return staleAuditMs();
+  return Math.min(staleAuditMs(), Math.max(MIN_STALE_AUDIT_MS, 3 * budgetMs));
+}

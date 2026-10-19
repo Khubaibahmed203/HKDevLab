@@ -23,7 +23,7 @@ export function parseSitemapXml(xml) {
  * hostile sitemap can list URLs on other domains, but we only ever read sitemaps on our own site, and cap
  * the total number fetched so a huge or malicious index can't turn one scan into an unbounded fetch spree.
  */
-export async function discoverSitemaps(origin, robotsSitemaps, { timeoutMs, userAgent, allowedHost } = {}) {
+export async function discoverSitemaps(origin, robotsSitemaps, { timeoutMs, userAgent, allowedHost, deadlineAt = null } = {}) {
   const MAX_SITEMAPS = 15;
   const seen = new Set();
   const results = [];
@@ -35,8 +35,12 @@ export async function discoverSitemaps(origin, robotsSitemaps, { timeoutMs, user
     let host;
     try { host = new URL(url).host.toLowerCase(); } catch { return { url, error: 'not a valid URL', entries: [] }; }
     if (host !== String(allowedHost).toLowerCase()) return { url, error: 'outside the configured domain — not fetched', entries: [] };
+    // an optional deadline (epoch ms) from the caller's scan budget: a fetch never runs past it, and none is started when almost nothing is left
+    const left = deadlineAt == null ? Infinity : deadlineAt - Date.now();
+    if (left < 250) return { url, error: 'skipped: the scan time budget was used up', entries: [] };
+    const allowed = deadlineAt == null ? timeoutMs : Math.min(timeoutMs ?? 10_000, left);
     try {
-      const res = await fetchBounded(url, { timeoutMs, userAgent, maxBytes: sitemapMaxBytes(), readBody: (r) => r.ok });
+      const res = await fetchBounded(url, { timeoutMs: allowed, userAgent, maxBytes: sitemapMaxBytes(), readBody: (r) => r.ok });
       if (!res.ok) return { url, error: `HTTP ${res.status}`, entries: [] };
       const { isIndex, entries } = parseSitemapXml(res.text);
       return { url, isIndex, entries, error: null };
