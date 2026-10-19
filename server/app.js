@@ -12,6 +12,7 @@ import { createLimiter } from './limits.js';
 import { DEFAULT_CONTENT, sanitizeContent, withDefaults } from './content.js';
 import { createSeoRouter } from './seo/routes.js';
 import { injectSeo } from '../content/seo.js';
+import { publicContent } from '../content/visibility.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(root, 'dist');
@@ -59,7 +60,7 @@ export async function createApp() {
   /* ───────────── security headers ───────────── */
   app.use((req, res, next) => {
     res.set({
-      'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:",
+      'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:",
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
@@ -94,7 +95,8 @@ export async function createApp() {
     try { await store.ping(); res.json({ ok: true, db: publicDbName(store.kind), mail: mailer.live ? 'smtp' : 'console (SMTP not configured)' }); }
     catch { res.status(503).json({ ok: false }); }
   });
-  app.get('/api/content', asyncH(async (req, res) => res.set('Cache-Control', 'no-cache').json((await site()).content)));
+  // what visitors get: drafts and un-featured concepts are removed here, on the server, so they never reach the browser
+  app.get('/api/content', asyncH(async (req, res) => res.set('Cache-Control', 'no-cache').json(publicContent((await site()).content))));
 
   /* ───────────── contact form ───────────── */
   // Vercel sets VERCEL_ENV to production | preview | development (NODE_ENV is "production" on all three, so it cannot tell a Preview apart); it is absent on Render, a VPS and
@@ -245,13 +247,16 @@ export async function createApp() {
   if (hasDist) {
     let indexCache = null;                         // { stamp, html }
     const renderIndex = ({ content, meta }) => {
-      if (indexCache && indexCache.stamp === meta.updatedAt) return indexCache.html;
-      const safeJson = JSON.stringify(content).replace(/</g, `${String.fromCharCode(92)}u003c`);   // can't break out of the <script>
+      const stamp = meta.updatedAt;                  // changes whenever the content is saved
+      if (indexCache && indexCache.stamp === stamp) return indexCache.html;
+      // visitors get publicContent(): drafts and un-featured concepts are removed on the server, so they never reach the browser
+      const safeJson = JSON.stringify(publicContent(content)).replace(/</g, `${String.fromCharCode(92)}u003c`);   // can't break out of the <script>
       const withContent = readFileSync(resolve(dist, 'index.html'), 'utf8')
         .replace('<!--SITE_CONTENT-->', `<script type="application/json" id="site-content">${safeJson}</script>`);
       // same injectSeo() the Phase-1 SEO analyzer runs against, so what it checks and what a visitor gets can never drift apart
+      // (it reads only content.seo, content.lab and content.contact, never the portfolio items, so passing the full content leaks no draft)
       const html = injectSeo(withContent, content, process.env.PUBLIC_URL);
-      indexCache = { stamp: meta.updatedAt, html };
+      indexCache = { stamp, html };
       return html;
     };
     // dist/index.html is the raw build template (default metadata, unfilled content marker); the rendered page is `/`. Express answers HEAD through this GET route.
@@ -259,9 +264,12 @@ export async function createApp() {
     app.get('/index.html', (req, res) => res.redirect(302, '/'));
     app.use(express.static(dist, {
       index: false,
-      setHeaders: (res, file) => res.set('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'),
+      setHeaders: (res, file) => res.set('Cache-Control', /[\\/]assets[\\/](?!projects[\\/])/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'),
     }));
-    app.get('/', asyncH(async (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(renderIndex(await site()))));
+    app.get('/', asyncH(async (req, res) => {
+      const s = await site();
+      res.set('Cache-Control', 'no-cache').type('html').send(renderIndex(s));
+    }));
   }
   app.use((req, res) => res.status(404).type('text').send('Not found'));
   app.use((err, req, res, next) => {                              // bad JSON, oversize body…

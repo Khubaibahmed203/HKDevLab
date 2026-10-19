@@ -39,6 +39,7 @@
 
 <div class="progress" id="progress" aria-hidden="true"></div>
 <canvas id="field" class="field" aria-hidden="true"></canvas>
+<div class="mascot" id="mascot"></div>
 
 <!-- ───────── header ───────── -->
 <header class="hdr" id="hdr">
@@ -262,7 +263,7 @@
       <header class="work__head">
         <p class="eyebrow">03 — Work</p>
         <h2 id="workTitle">Selected concepts</h2>
-        <p class="work__note">Sample concepts showing the kind of work we build. Real case studies are on the way.</p>
+        <p class="work__note">Live landing pages — click a project to open it in a new tab.</p>
       </header>
 
       <div class="ring" id="ring">
@@ -271,9 +272,19 @@
       </div>
 
       <div class="work__cap" id="workCap" aria-live="polite">
-        <span class="work__idx"><b id="workIdx">01</b> / <span id="workTot">07</span></span>
-        <h3 id="workName">—</h3>
-        <p id="workMeta">—</p>
+        <div class="work__id">
+          <span class="work__idx"><b id="workIdx">01</b> / <span id="workTot">02</span></span>
+          <h3 id="workName"><a id="workNameLink" target="_blank" rel="noopener noreferrer">—</a></h3>
+          <p id="workMeta">—</p>
+        </div>
+        <div class="work__more">
+          <p class="work__desc" id="workDesc" hidden></p>
+          <p class="work__tech" id="workTech" hidden></p>
+          <div class="work__acts">
+            <a class="btn btn--ghost btn--sm work__live" id="workLive" target="_blank" rel="noopener noreferrer" hidden>View live <span aria-hidden="true">→</span></a>
+            <a class="work__git" id="workGit" target="_blank" rel="noopener noreferrer" hidden>GitHub ↗</a>
+          </div>
+        </div>
       </div>
       <p class="work__hint" aria-hidden="true">Scroll<br>Explore<br>Interact</p>
     </div>

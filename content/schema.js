@@ -8,19 +8,65 @@
  *   text     one line                      lines    a few short lines (\n allowed) — headings
  *   area     paragraph(s)                  href     "#anchor", /path, https://… or mailto:…
  *   select   one of `options`              color    #rrggbb
- *   bool     checkbox                      list     list of one-line strings
+ *   bool     checkbox (`default` when missing)   list   list of one-line strings
  *   image    photo uploaded in the admin (stored as /media/<id>)
+ *   url      a web address: http(s) only, a real host (see isWebUrl)
  *   numlist  list of numbers 0–100         obj      nested group (`fields`)
  *   objlist  repeatable group (`fields`)
- * Modifiers: max, min (length), maxItems, minItems, optional, when: { field: [values] }, itemLabel
+ * Modifiers: max, min (length), maxItems, minItems, optional, when: { field: [values] }, itemLabel,
+ *            default (bool), noun / wide (image: wording and a landscape thumbnail),
+ *            livePreview (url: the admin shows the saved screenshot of that page in a browser frame under the field)
+ * A field with `when` is only required (and only checked) while its condition holds, so a field that is not `optional`
+ * but has `when: { kind: ['live'] }` is required for live projects only.
  */
 export const ICONS = ['monitor', 'dashboard', 'cpu', 'code', 'zap', 'devices', 'heart', 'shield', 'rocket', 'globe', 'chat', 'chart', 'lock', 'star', 'users', 'layers'];
 export const KINDS = [
-  { value: 'hero', label: 'Landing page (headline + button)' },
-  { value: 'dash', label: 'Dashboard (numbers + chart)' },
-  { value: 'chat', label: 'Chat / assistant' },
-  { value: 'shop', label: 'Online shop' },
+  { value: 'live', label: 'Live project (a screenshot of its real landing page)' },   // first = what a new project starts as
+  { value: 'hero', label: 'Sample · landing page (drawn mockup)' },
+  { value: 'dash', label: 'Sample · dashboard (drawn mockup)' },
+  { value: 'chat', label: 'Sample · chat / assistant (drawn mockup)' },
+  { value: 'shop', label: 'Sample · online shop (drawn mockup)' },
 ];
+const LIVE = { kind: ['live'] };
+const MOCKS = ['hero', 'dash', 'chat', 'shop'];   // the drawn sample layouts — they use the two colours and the window address below
+
+/** An address a visitor may be sent to: http(s) only, a real host, no embedded login, no spaces. Used by the server and the admin form. */
+export function isWebUrl(s) {
+  if (typeof s !== 'string' || /\s/.test(s)) return false;
+  try {
+    const u = new URL(s);
+    return /^https?:$/.test(u.protocol) && u.hostname.includes('.') && !u.username && !u.password;
+  } catch { return false; }
+}
+
+/**
+ * What gets saved for an address typed in the admin: trimmed, "example.com/x" → "https://example.com/x", host lower-cased,
+ * default port and #fragment dropped, always a full href. Returns '' when it is not an acceptable web address
+ * (so `javascript:`, `data:`, relative paths, hosts without a dot and addresses with a login are all refused).
+ */
+export function normalizeWebUrl(s) {
+  let t = String(s ?? '').trim();
+  if (!t) return '';
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(t) && /^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[:/?#]|$)/i.test(t)) t = `https://${t}`;   // typed without https://
+  if (!isWebUrl(t)) return '';
+  const u = new URL(t);
+  u.hash = '';
+  return u.href;
+}
+
+/**
+ * Where the screenshot of a project's landing page lives, worked out from its Live URL alone — so the website, the admin and the capture
+ * script (`npm run capture-project-previews`) always agree, and a project needs nothing stored but its address.
+ *   https://khubaib-portfolio-brown.vercel.app/  →  /assets/projects/khubaib-portfolio-brown-vercel-app-preview.webp
+ */
+export function previewPath(liveUrl) {
+  try {
+    const u = new URL(liveUrl);
+    const slug = (u.host.replace(/^www\./, '') + (u.pathname === '/' ? '' : u.pathname)).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const name = slug.slice(0, 80).replace(/-+$/, '');
+    return name ? `/assets/projects/${name}-preview.webp` : '';
+  } catch { return ''; }
+}
 
 const text = (k, label, o = {}) => ({ k, label, type: 'text', max: 120, ...o });
 const lines = (k, label, o = {}) => ({ k, label, type: 'lines', max: 120, help: 'Press Enter for a new line.', ...o });
@@ -29,6 +75,7 @@ const list = (k, label, o = {}) => ({ k, label, type: 'list', max: 80, ...o });
 const obj = (k, label, fields, o = {}) => ({ k, label, type: 'obj', fields, ...o });
 const objlist = (k, label, fields, o = {}) => ({ k, label, type: 'objlist', fields, ...o });
 const href = (k, label, o = {}) => ({ k, label, type: 'href', max: 300, ...o });
+const weburl = (k, label, o = {}) => ({ k, label, type: 'url', max: 300, ...o });
 
 const link = (k, label) => obj(k, label, [text('label', 'Button text', { max: 40 }), href('href', 'Goes to', { help: 'Use #contact, #work… for sections on this page, or a full https:// address.' })]);
 const icon = () => ({ k: 'icon', label: 'Icon', type: 'select', options: ICONS });
@@ -93,19 +140,25 @@ export const SCHEMA = [
     ],
   },
   {
-    key: 'work', label: 'Work (projects)',
-    hint: 'Each project is drawn as a browser window. Choose a layout, then fill in what it shows.',
+    key: 'work', label: 'Selected Concepts (projects)',
+    hint: 'Each project is a browser window on the website. Their order here is the order on the site — use the arrows. A project shows on the site only while it is Featured and Published; untick either to keep it here without showing it. Everything goes live when you click "Save changes".',
     fields: [
       text('eyebrow', 'Section label', { max: 50 }),
       text('title', 'Headline', { max: 60 }),
       area('note', 'Note under the headline', { max: 200, optional: true }),
-      objlist('items', 'Projects (at least 4)', [
+      objlist('items', 'Projects', [
         text('name', 'Project name', { max: 40 }),
-        text('meta', 'Type / tagline', { max: 70 }),
-        text('url', 'Web address shown in the window', { max: 60 }),
+        text('meta', 'Category', { max: 70, help: 'Shown under the name, e.g. "Website · Online shop".' }),
+        { k: 'featured', label: 'Featured — show in Selected Concepts', type: 'bool', default: true },
+        { k: 'published', label: 'Published — untick to keep it as a draft (hidden from visitors)', type: 'bool', default: true },
         { k: 'kind', label: 'Layout', type: 'select', options: KINDS },
-        { k: 'a', label: 'Colour 1', type: 'color' },
-        { k: 'b', label: 'Colour 2', type: 'color' },
+        area('description', 'Short description', { max: 180, when: LIVE, help: 'One or two sentences about the project.' }),
+        list('technologies', 'Technologies', { max: 24, maxItems: 8, when: LIVE, help: 'Up to 8, e.g. React, Node.js, PostgreSQL.' }),
+        weburl('liveUrl', 'Live website URL', { when: LIVE, livePreview: true, help: 'The full address, e.g. https://example-project.vercel.app/. The card shows a screenshot of this page (generated with "npm run capture-project-previews" — there is nothing to upload). "View live", the card and its name open it in a new tab.' }),
+        weburl('githubUrl', 'GitHub URL (optional)', { optional: true, when: LIVE, help: 'Shown as a small "GitHub" link next to "View live". Leave empty to hide it.' }),
+        text('url', 'Web address shown in the window', { max: 60, when: { kind: MOCKS } }),
+        { k: 'a', label: 'Colour 1', type: 'color', when: { kind: MOCKS } },
+        { k: 'b', label: 'Colour 2', type: 'color', when: { kind: MOCKS } },
         lines('title', 'Headline', { when: { kind: ['hero', 'shop'] } }),
         text('sub', 'Sub-text', { max: 90, optional: true, when: { kind: ['hero'] } }),
         text('cta', 'Button text', { max: 30, optional: true, when: { kind: ['hero'] } }),
@@ -113,7 +166,7 @@ export const SCHEMA = [
         objlist('kpis', 'Number cards (up to 3)', [text('label', 'Label', { max: 20 }), text('value', 'Value', { max: 12 })], { maxItems: 3, optional: true, when: { kind: ['dash'] } }),
         { k: 'bars', label: 'Chart bars (numbers 0–100)', type: 'numlist', maxItems: 12, optional: true, when: { kind: ['dash'] } },
         objlist('chat', 'Chat messages (up to 4)', [text('text', 'Message', { max: 90 }), { k: 'mine', label: 'From the customer', type: 'bool' }], { maxItems: 4, optional: true, when: { kind: ['chat'] } }),
-      ], { minItems: 4, maxItems: 12, itemLabel: 'name' }),
+      ], { maxItems: 24, itemLabel: 'name' }),
     ],
   },
   {

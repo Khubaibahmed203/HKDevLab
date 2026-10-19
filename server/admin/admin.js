@@ -1,4 +1,4 @@
-import { SCHEMA } from '/admin/schema.js';
+import { SCHEMA, normalizeWebUrl, previewPath } from '/admin/schema.js';
 
 /* HK DevLab admin portal — dependency-free. All user data is inserted with textContent / properties,
    never as HTML, and every state-changing request carries the X-Requested-With header the server requires. */
@@ -204,7 +204,7 @@ function blank(f) {
   switch (f.type) {
     case 'select': return optVal(f.options[0]);
     case 'color': return '#12a6ff';
-    case 'bool': return false;
+    case 'bool': return f.default === true;
     case 'list': case 'numlist': case 'objlist': return [];
     case 'obj': return blankObj(f.fields);
     default: return '';
@@ -230,6 +230,18 @@ function field(f, obj, touch, regroup) {
     case 'text': case 'href': {
       const i = h('input', { id, type: 'text', value: obj[f.k] ?? '', maxLength: f.max || 200, autocomplete: 'off', oninput: () => { obj[f.k] = i.value; touch(); } });
       return wrapFld(f, id, i);
+    }
+    case 'url': {                                   // same rule as the server (normalizeWebUrl); the server still has the last word
+      const msg = h('small', { class: 'err' });
+      const check = () => { const v = i.value.trim(); msg.textContent = v && !normalizeWebUrl(v) ? 'Enter a full web address, e.g. https://example.com/' : ''; };
+      const i = h('input', {
+        id, type: 'text', inputMode: 'url', placeholder: 'https://example-project.vercel.app/', value: obj[f.k] ?? '', maxLength: f.max || 300, autocomplete: 'off',
+        oninput: () => { obj[f.k] = i.value; check(); touch(); pane && pane.changed(); },
+        onchange: () => { const n = normalizeWebUrl(i.value); if (n && n !== i.value) { i.value = n; obj[f.k] = n; touch(); } check(); },   // "example.com" → "https://example.com/"
+      });
+      const pane = f.livePreview ? previewPane(() => normalizeWebUrl(i.value), () => obj.name) : null;
+      check();
+      return h('div', { class: 'fld' }, h('label', { for: id, text: f.label }), i, msg, pane && pane.el, f.help && h('small', { class: 'help', text: f.help }));
     }
     case 'area': case 'lines': {
       const count = h('div', { class: 'count' });
@@ -260,6 +272,38 @@ function field(f, obj, touch, regroup) {
     case 'objlist': return objlistField(f, obj, touch);
     default: return h('div');
   }
+}
+
+/* ───────────── preview of a project's landing page, in a browser-style frame ───────────── */
+// The Live URL is the only input. The picture is the screenshot that `npm run capture-project-previews` saved for that address
+// (its file name is worked out from the address — previewPath in the schema), exactly what the website's card shows. No page is loaded,
+// nothing is fetched from the project's site. Until the screenshot exists (a new or changed address) the pane says how to make it.
+const hostPath = (u) => { try { const x = new URL(u); return x.host + (x.pathname === '/' && !x.search ? '' : x.pathname) + x.search; } catch { return ''; } };   // project.vercel.app/products
+function lockIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'pv__lock'); svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path'); path.setAttribute('d', 'M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6z'); svg.append(path);
+  return svg;
+}
+function previewPane(getUrl, getName) {
+  const addr = h('span', { class: 'pv__addr' });
+  const open = h('a', { class: 'pv__open', target: '_blank', rel: 'noopener noreferrer', title: 'Open the live website in a new tab', 'aria-label': 'Open the live website in a new tab', text: '↗', hidden: true });
+  const view = h('div', { class: 'pv__view' });
+  const el = h('div', { class: 'pvw' }, h('div', { class: 'pv' }, h('div', { class: 'pv__bar' }, h('i'), h('i'), h('i'), h('span', { class: 'pv__pill' }, lockIcon(), addr), open), view));
+  let seq = 0, timer = 0;
+
+  const message = (title, text) => view.replaceChildren(h('div', { class: 'pv__msg' }, h('b', { text: title }), text && h('span', { text })));
+  function run() {
+    const url = getUrl(), src = url && previewPath(url), mine = ++seq;
+    addr.textContent = url ? hostPath(url) : ''; open.hidden = !url; if (url) open.href = url;
+    if (!src) return message('Landing-page preview', 'Enter the Live Website URL above and a screenshot of its landing page appears here.');
+    const img = h('img', { alt: `${getName() || 'Project'} — landing page`, width: 1440, height: 900, decoding: 'async' });
+    img.addEventListener('load', () => { if (mine === seq) view.replaceChildren(img); });
+    img.addEventListener('error', () => { if (mine === seq) message('No screenshot of this page yet', 'Run "npm run capture-project-previews", commit the new picture in public/assets/projects/ and deploy — until then the card shows the project name.'); });
+    img.src = src;
+  }
+  run();
+  return { el, changed: () => { clearTimeout(timer); timer = setTimeout(run, 400); } };       // follows the address as it is typed
 }
 
 /* ───────────── photo field: choose → shrink in the browser → upload → preview ───────────── */
@@ -294,30 +338,31 @@ async function uploadPhoto(blob) {
   } catch { return { error: 'Could not reach the server.' }; }
 }
 function imageField(f, obj, touch) {
-  const thumb = h('div', { class: 'photo__thumb' });
+  const noun = f.noun || 'photo';                    // "photo" for portraits, "screenshot" for project previews
+  const thumb = h('div', { class: `photo__thumb${f.wide ? ' photo__thumb--wide' : ''}` });
   const msg = h('small', { class: 'help', role: 'status' });
   const input = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', hidden: true, 'aria-label': f.label });
   const pick = h('button', { class: 'btn btn--sm', type: 'button', onclick: () => input.click() });
-  const drop = h('button', { class: 'btn btn--sm btn--danger', type: 'button', text: 'Remove photo', onclick: () => { obj[f.k] = ''; touch(); msg.textContent = ''; draw(); } });
+  const drop = h('button', { class: 'btn btn--sm btn--danger', type: 'button', text: `Remove ${noun}`, onclick: () => { obj[f.k] = ''; touch(); msg.textContent = ''; draw(); } });
   const draw = () => {
     const has = !!obj[f.k];
-    thumb.replaceChildren(has ? h('img', { src: obj[f.k], alt: 'Current photo' }) : h('span', { text: 'No photo yet' }));
-    pick.textContent = has ? 'Replace photo' : 'Upload photo';
+    thumb.replaceChildren(has ? h('img', { src: obj[f.k], alt: `Current ${noun}` }) : h('span', { text: `No ${noun} yet` }));
+    pick.textContent = has ? `Replace ${noun}` : `Upload ${noun}`;
     drop.hidden = !has;
   };
   const say = (text, bad) => { msg.className = bad ? 'err' : 'help'; msg.textContent = text; };
   input.onchange = async () => {
     const file = input.files && input.files[0]; input.value = '';
     if (!file) return;
-    pick.disabled = true; say('Preparing photo…');
+    pick.disabled = true; say(`Preparing ${noun}…`);
     let blob;
-    try { blob = await shrinkPhoto(file); } catch { pick.disabled = false; return say("That file could not be read as a photo. Please choose a JPG, PNG or WebP image.", true); }
+    try { blob = await shrinkPhoto(file); } catch { pick.disabled = false; return say(`That file could not be read as a ${noun}. Please choose a JPG, PNG or WebP image.`, true); }
     say('Uploading…');
     const r = await uploadPhoto(blob);
     pick.disabled = false;
     if (r.error) return say(r.error, true);
     obj[f.k] = r.url; touch(); draw();
-    say('Photo uploaded. Remember to click "Save changes" to put it on the site.');
+    say(`${noun[0].toUpperCase()}${noun.slice(1)} uploaded. Remember to click "Save changes" to put it on the site.`);
   };
   draw();
   return h('div', { class: 'fld' }, h('span', { class: 'lbl', text: f.label }),
@@ -345,14 +390,42 @@ function listField(f, obj, touch) {
 }
 const $$$ = (s, r) => [...r.querySelectorAll(s)];
 
+/** A confirmation in the portal's own modal (the safe answer is focused, so a stray Enter cancels). Resolves true / false. */
+function confirmDialog({ title, body, confirmLabel = 'Confirm', danger = false }) {
+  return new Promise((resolve) => {
+    const before = document.activeElement;
+    const modal = h('div', { class: 'modal', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': title });
+    const done = (yes) => { modal.remove(); if (before && before.isConnected) before.focus(); resolve(yes); };
+    modal.onclick = (e) => e.target === modal && done(false);
+    modal.addEventListener('keydown', (e) => e.key === 'Escape' && done(false));
+    const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => done(false) });
+    modal.append(h('div', {}, h('h2', { text: title }), h('p', { class: 'meta', text: body }),
+      h('div', { class: 'row' }, cancel, h('button', { class: `btn ${danger ? 'btn--danger' : 'btn--primary'}`, type: 'button', text: confirmLabel, onclick: () => done(true) }))));
+    document.body.append(modal);
+    cancel.focus();
+  });
+}
+
+/** Where a project stands, when its fields include the Featured / Published flags: [label, style, tooltip] or null. */
+const statusOf = (item) => ('published' in item || 'featured' in item)
+  ? (item.published === false ? ['Draft', 'bad', 'A draft — not shown on the website'] : item.featured === false ? ['Not featured', '', 'Published, but not shown in Selected Concepts'] : ['Live', 'ok', 'Shown on the website once saved'])
+  : null;
+
 const openState = new WeakMap();
 function objlistField(f, obj, touch) {
   const arr = obj[f.k];
   const compact = f.fields.length <= 2;
   const box = h('div', { class: 'fs' });
   const move = (i, d) => { [arr[i], arr[i + d]] = [arr[i + d], arr[i]]; touch(); draw(); };
-  const remove = (i) => { arr.splice(i, 1); touch(); draw(); };
   const titleOf = (item, i) => (f.itemLabel && String(item[f.itemLabel] || '').trim()) || `Item ${i + 1}`;
+  const remove = async (i) => {                     // a project, service, founder… is never deleted on a single click: ask first (tiny one-line rows go straight away)
+    const yes = compact || await confirmDialog({
+      title: `Delete “${titleOf(arr[i], i)}”?`,
+      body: 'It is removed from this list now and from the website when you click “Save changes”. Nothing is lost until you save, and History can bring an older version back.',
+      confirmLabel: 'Delete', danger: true,
+    });
+    if (yes) { arr.splice(i, 1); touch(); draw(); }
+  };
 
   const draw = () => {
     const items = arr.map((item, i) => {
@@ -363,9 +436,12 @@ function objlistField(f, obj, touch) {
       ];
       if (compact) return h('div', { class: 'row--compact' }, group(f.fields, item, touch), h('div', { class: 'row' }, controls));
       const ttl = h('span', { class: 'ttl', text: titleOf(item, i) });
-      const liveTouch = () => { ttl.textContent = titleOf(item, i); touch(); };
+      const pill = h('span', { class: 'pill' });
+      const paint = () => { const s = statusOf(item); pill.hidden = !s; if (s) { pill.className = `pill ${s[1]}`.trim(); pill.textContent = s[0]; pill.title = s[2]; } };
+      paint();
+      const liveTouch = () => { ttl.textContent = titleOf(item, i); paint(); touch(); };
       const d = h('details', { class: 'item' },
-        h('summary', {}, h('span', { class: 'num', text: String(i + 1).padStart(2, '0') }), ttl, ...controls),
+        h('summary', {}, h('span', { class: 'num', text: String(i + 1).padStart(2, '0') }), ttl, pill, ...controls),
         h('div', { class: 'body' }, group(f.fields, item, liveTouch)));
       d.open = openState.has(item) ? openState.get(item) : arr.length <= 5;
       d.ontoggle = () => openState.set(item, d.open);
