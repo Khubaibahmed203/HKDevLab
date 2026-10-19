@@ -35,6 +35,7 @@ export function initChrome({ lenis, reduce }) {
   const goTo = (hash) => {
     const el = hash === '#top' ? document.documentElement : $(hash);
     if (!el) return false;
+    closeMenu();                               // first: an open menu has stopped Lenis, and Lenis ignores scrollTo() while it is stopped
     if (lenis) lenis.scrollTo(hash === '#top' ? 0 : el, { duration: 1.6, easing: (t) => 1 - Math.pow(1 - t, 4) });
     else el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
     history.replaceState(null, '', hash);
@@ -43,7 +44,7 @@ export function initChrome({ lenis, reduce }) {
   document.addEventListener('click', (e) => {
     const a = e.target.closest('a[href^="#"]');
     if (!a || a.getAttribute('href') === '#') return;
-    if (goTo(a.getAttribute('href'))) { e.preventDefault(); closeMenu(); }
+    if (goTo(a.getAttribute('href'))) e.preventDefault();
   });
 
   // mobile menu
