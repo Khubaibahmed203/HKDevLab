@@ -364,7 +364,7 @@ Other mailboxes (Google Workspace `smtp.gmail.com:587` with an app password, Zoh
 
 The same app also runs as a **Vercel Function**: `vercel.json` sends `/api/*` and `/admin*` to `api/index.js` (which wraps `server/app.js`) and
 serves the built site from Vercel's CDN. Because Vercel starts short-lived copies of the server with no shared memory or disk, the app keeps
-**everything shared in the database** — sessions, login lock-out, rate limits, the "first account" lock (one atomic SQL statement) and the
+**everything shared in the database** — sessions, login lock-out, rate limits, the "first account" lock (a marked row plus a partial unique index, so the database admits only one — a bare `INSERT … WHERE NOT EXISTS` is not enough on PostgreSQL) and the
 site content — and sends emails *before* replying (a function is frozen once it responds). `node server/test-serverless.mjs` proves this with
 three independent copies sharing one database.
 

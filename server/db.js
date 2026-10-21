@@ -23,6 +23,14 @@ export const DUPLICATE_ACTIVE_AUDIT_SUMMARY = 'Marked failed at startup: a newer
 const isActiveAuditConflict = (err) => err?.code === '23505'
   ? !err.constraint || err.constraint === ACTIVE_AUDIT_INDEX
   : /UNIQUE constraint failed: seo_audits\.website_id\b/.test(String(err?.message));
+// Phase 5 D5.1e.2: the FIRST ACCOUNT is claimed the same way. createFirstUser()'s INSERT…WHERE NOT EXISTS is only a fast path: under PostgreSQL's default READ COMMITTED two simultaneous attempts
+// (even with different e-mails) both see "no users" and both insert, and no other constraint stops them — reproduced on PostgreSQL 17.11 (two admins, no error). So the first account is written
+// with bootstrap = 1 and a partial unique index admits at most ONE such row: the loser's INSERT is rejected by the database. True ONLY for a violation of that index — PostgreSQL names it, SQLite
+// names users.bootstrap. A violation of anything else (users.email, the primary key) is a real failure and is never treated as "someone else holds the first account"; so is an unnamed 23505.
+const BOOTSTRAP_INDEX = 'uq_users_one_bootstrap';
+const isBootstrapConflict = (err) => err?.code === '23505'
+  ? err.constraint === BOOTSTRAP_INDEX
+  : /UNIQUE constraint failed: users\.bootstrap\b/.test(String(err?.message));
 
 /* ───────────── adapters ───────────── */
 async function sqliteAdapter() {
@@ -182,6 +190,18 @@ export async function createStore({ pool } = {}) {
   // and write below treats NULL as version 0.
   await addColumn('content', 'version', 'INTEGER');
 
+  // Phase 5 D5.1e.2: the first-account marker (see BOOTSTRAP_INDEX above). Plain nullable INTEGER with no DEFAULT — the existing additive convention: every existing user keeps NULL ("not the
+  // bootstrap account"), nothing about an existing account changes, and the partial index below covers no existing row. Only createFirstUser() ever writes 1. A server that silently lacked the
+  // index would look protected and not be, so a build that keeps failing is thrown; the retry covers two instances starting together and colliding on the DDL itself (as for the audit index).
+  await addColumn('users', 'bootstrap', 'INTEGER');
+  for (let attempt = 1; ; attempt++) {
+    try { await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${BOOTSTRAP_INDEX} ON users (bootstrap) WHERE bootstrap = 1`); break; }
+    catch (err) {
+      if (attempt >= 3) throw err;
+      console.error(`[db] could not build the first-account index (attempt ${attempt} of 3): ${String(err?.message).slice(0, 200)} — retrying`);
+    }
+  }
+
   // Phase 4 Hardening #9: one active audit per website, enforced by a partial unique index. A database that predates it may already hold
   // several queued/running audits for one website (the race this closes, or manual edits), and the index cannot be built over them — so
   // first fail every active audit that a NEWER active audit of the same website supersedes. The survivor is the highest id, the same audit
@@ -280,10 +300,18 @@ export async function createStore({ pool } = {}) {
     async createUser({ email, name, passwordHash, role }) {
       return db.insert('INSERT INTO users (email,name,password_hash,role,created_at) VALUES (?,?,?,?,?)', [email, name, passwordHash, role, now()]);
     },
-    /** Creates the user ONLY if no user exists yet — one atomic statement, so of any number of simultaneous
-     *  attempts (even on different servers) exactly one wins. Returns the new id, or null if someone already exists. */
+    /** Creates the user ONLY if no user exists yet. Returns the new id, or null if someone already holds the first account.
+     *  Two layers, and only the second is the guarantee (the same shape as createAuditIfNoneActive() below). The INSERT…SELECT…WHERE NOT EXISTS turns the ordinary second attempt into a plain
+     *  "0 rows inserted" — but it is NOT atomic against a CONCURRENT attempt on PostgreSQL's default READ COMMITTED: both sessions can see "no users" and both insert. So the first account is
+     *  written with bootstrap = 1 and the partial unique index on that marker lets the database admit only one: the loser's INSERT is rejected, and exactly that violation — nothing else — is
+     *  reported as null (setup then answers "already completed"). Every other error is thrown. */
     async createFirstUser({ email, name, passwordHash, role }) {
-      return db.insert('INSERT INTO users (email,name,password_hash,role,created_at) SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM users)', [email, name, passwordHash, role, now()]);
+      try {
+        return await db.insert('INSERT INTO users (email,name,password_hash,role,created_at,bootstrap) SELECT ?,?,?,?,?,1 WHERE NOT EXISTS (SELECT 1 FROM users)', [email, name, passwordHash, role, now()]);
+      } catch (err) {
+        if (isBootstrapConflict(err)) return null;
+        throw err;
+      }
     },
     async userByEmail(email) { return (await db.all('SELECT * FROM users WHERE email = ?', [email]))[0] || null; },     // includes password_hash
     async userById(id) { return user((await db.all('SELECT * FROM users WHERE id = ?', [id]))[0]); },

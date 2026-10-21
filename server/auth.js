@@ -116,7 +116,8 @@ export function createAuth(store, { isProd, originAllowed, hashIp, limiter }) {
     const errors = validateAccount(req.body || {});
     if (Object.keys(errors).length) return res.status(400).json({ ok: false, errors });
 
-    // One atomic INSERT … WHERE NOT EXISTS: of any number of simultaneous requests (even on different servers) exactly one wins.
+    // Of any number of simultaneous requests (even on different servers) exactly one wins — the DATABASE decides: createFirstUser() marks the first account and a unique index admits only one
+    // marked row, so the loser gets null here. (The INSERT … WHERE NOT EXISTS alone is not atomic on PostgreSQL's READ COMMITTED, and the userCount() check above is only a courtesy.)
     const id = await store.createFirstUser({ email: cleanEmail(req.body.email), name: cleanName(req.body.name), passwordHash: await hashPassword(req.body.password), role: 'admin' });
     if (!id) return res.status(403).json({ ok: false, error: 'Setup has already been completed. Please sign in.' });
     await store.touchLogin(id);

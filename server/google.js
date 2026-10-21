@@ -102,7 +102,7 @@ export function createGoogle(store, auth, { isProd, hashIp, limiter }) {
       if ((await store.userCount()) > 0) return fail('not_invited');                                       // nobody signs themselves up
       if (!attempt.setupOk) return fail('setup_key');
       const name = auth.cleanName(claims.name) || email.split('@')[0];
-      const id = await store.createFirstUser({ email, name, passwordHash: '', role: 'admin' });      // atomic: only ever succeeds once
+      const id = await store.createFirstUser({ email, name, passwordHash: '', role: 'admin' });      // succeeds once: the database admits only one first account (null for the loser)
       if (!id) return fail('not_invited');
       await store.linkGoogle(id, claims.sub);
       user = { id };
