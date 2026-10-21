@@ -65,19 +65,46 @@ export function guardPoolErrors(pool) {
 // TLS for a PostgreSQL URL. A remote database is reached over TLS that checks the server's certificate AND hostname (rejectUnauthorized stays on). Only a loopback
 // destination skips TLS, and "loopback" is judged on the host pg will actually dial — `?host=` or an empty host can change it — never by searching the URL text, so a
 // password, user or database name containing "localhost" cannot switch TLS off. Options written in the URL itself (sslmode=…, ssl=…) are applied by pg ON TOP of this
-// value and are deliberately left alone: on the installed pg 8, sslmode=require / verify-full / prefer / verify-ca keep full verification, while sslmode=no-verify,
-// sslmode=disable, ssl=0 and uselibpqcompat=true with prefer/require turn verification (or TLS itself) off — those stay the operator's explicit, visible choice.
+// value (and replace it whole), so the value alone proves nothing: assertVerifiedTls() below checks what pg will really use.
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const isLoopbackHost = (host) => typeof host === 'string' && LOOPBACK_HOSTS.has(host.toLowerCase());
 function pgSslFor(pg, connectionString) {
   let host;
   try { host = new pg.Client({ connectionString }).host; } catch { /* unparseable: not loopback, so verified TLS; the pool reports the parse error at its first query */ }
-  return typeof host === 'string' && LOOPBACK_HOSTS.has(host.toLowerCase()) ? false : { rejectUnauthorized: true };
+  return isLoopbackHost(host) ? false : { rejectUnauthorized: true };
+}
+
+// Phase 5 D5.1i — FAIL CLOSED for every non-loopback database. Until now an insecure URL option was accepted as "the operator's choice" (sslmode=disable / no-verify, ssl=0 / no-verify, uselibpqcompat=true
+// with prefer / require, or a root certificate with the host-name check switched off), and NODE_TLS_REJECT_UNAUTHORIZED=0 weakens any ssl object that does not say rejectUnauthorized itself — which is
+// exactly what sslmode=require turns it into. Encryption alone is not enough: the certificate chain AND the host name must be verified. The decision is made on the options pg will REALLY use (its own merge
+// of URL and option, read from a Client that is constructed but never connected) — not on the URL text — so duplicates, letter case, odd values and any future pg that changes what a mode means are covered.
+// The pool is only built when this passes, and the options handed to it are exactly what they were before. The error carries only a fixed code and a fixed reason, never a host, user, password or URL.
+const TLS_SAFE_KEYS = new Set(['ca', 'cert', 'key', 'rejectUnauthorized']);     // what the URL parser can add without weakening verification (a custom CA, client-certificate material, an explicit true); anything else cannot be proven safe
+/** Why the settings pg will use for `host` do NOT verify certificate chain and host name — or null when they do (and always null for a loopback host). */
+function tlsProblem(host, ssl) {
+  if (isLoopbackHost(host)) return null;
+  const envOff = process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0';              // Node reads exactly this; it only fills the gap where the options do not say rejectUnauthorized themselves
+  if (ssl === true) return envOff ? 'env-disables-verification' : null;
+  if (!ssl) return 'plaintext';                                                 // false, '', null, undefined
+  if (typeof ssl !== 'object' || Array.isArray(ssl)) return 'unrecognized-options';   // e.g. the string 'false' from ?ssl=false: cannot be proven to be TLS with verification
+  if (ssl.rejectUnauthorized === false) return 'certificate-not-verified';
+  if (typeof ssl.checkServerIdentity === 'function') return 'hostname-not-checked';
+  if (Object.keys(ssl).some((k) => !TLS_SAFE_KEYS.has(k)) || (ssl.rejectUnauthorized !== undefined && ssl.rejectUnauthorized !== true)) return 'unrecognized-options';
+  return envOff && ssl.rejectUnauthorized !== true ? 'env-disables-verification' : null;
+}
+function assertVerifiedTls(pg, connectionString) {
+  let params;
+  try { params = new pg.Client({ connectionString, ssl: pgSslFor(pg, connectionString) }).connectionParameters; }
+  catch { return; }                       // pg cannot resolve these options at all, so it throws the same way on every connection attempt: nothing can be dialled, and its own error is reported unchanged
+  const reason = tlsProblem(params.host, params.ssl);
+  if (reason) throw Object.assign(new Error(`PostgreSQL TLS is not verified (${reason}): a non-local database needs TLS that verifies the certificate and the host name. Remove sslmode=disable / no-verify, ssl=0 / no-verify and uselibpqcompat=true from DATABASE_URL and unset NODE_TLS_REJECT_UNAUTHORIZED=0; use sslmode=require or verify-full, with sslrootcert=… or NODE_EXTRA_CA_CERTS for a private CA.`), { code: 'DB_TLS_NOT_VERIFIED', reason });
 }
 
 async function pgAdapter(poolOrUrl) {
   let pool = poolOrUrl;
   if (typeof poolOrUrl === 'string') {
     const { default: pg } = await import('pg');
+    assertVerifiedTls(pg, poolOrUrl);           // fail closed BEFORE any pool exists (Phase 5 D5.1i)
     pool = new pg.Pool({ connectionString: poolOrUrl, ssl: pgSslFor(pg, poolOrUrl), max: 5 });
   }
   guardPoolErrors(pool);                     // the pool built above and any injected pool that supports .on()

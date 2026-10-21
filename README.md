@@ -354,6 +354,14 @@ Phase 4 and were not audited.
 | `ANTHROPIC_MODEL` `SEO_LLM_TIMEOUT_MS` | Optional. Override the Anthropic model id (default `claude-sonnet-5`) and the AI-recommendation request timeout (default 20s). |
 | `PAGESPEED_API_KEY` | Optional real PageSpeed Insights performance scoring for the scanned homepage. Without it, performance is reported as unavailable, never a fabricated number. |
 
+**PostgreSQL TLS (`DATABASE_URL`).** A database on any host other than `localhost`, `127.0.0.1` or `::1` must be reached over TLS that verifies the
+server's certificate **and** host name; a provider's URL such as Neon's `…?sslmode=require` (or `sslmode=verify-full`) does. The app checks the options
+`pg` will really use and **fails closed** — error code `DB_TLS_NOT_VERIFIED`, before any connection is made — when the URL or the environment turns that
+off: `sslmode=disable` or `no-verify`, `ssl=0` or `no-verify`, `uselibpqcompat=true` with `prefer`/`require`/`verify-ca`, or
+`NODE_TLS_REJECT_UNAUTHORIZED=0` (which weakens every TLS connection in the process, not only the database's). There is no override. For a private or
+self-signed database, trust its CA instead: `sslrootcert=/path/ca.pem` in the URL, or `NODE_EXTRA_CA_CERTS=/path/ca.pem`. A `localhost` development
+database is unchanged; any other host name — a Docker service name, a Unix-socket path — counts as non-local and needs the verified TLS described here.
+
 **Cloudflare Email Routing** only forwards *incoming* mail and cannot send. Use a sending service such as Resend
 (free tier): verify `hkdevlab.com` there (add its DNS records in Cloudflare, "DNS only"), create an API key, then
 `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=465`, `SMTP_SECURE=true`, `SMTP_USER=resend`, `SMTP_PASS=<api key>`,
