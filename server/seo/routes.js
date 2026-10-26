@@ -3,9 +3,16 @@ import { siteOrigin } from '../../content/seo.js';
 import { queueScan, ensureProgressing, refreshAudit, compareToPreviousAudit } from './jobs.js';
 import { generateRecommendation } from './recommendations.js';
 import { applyRecommendation } from './apply.js';
+import { onServerless } from './limits.js';
 
 const SEVERITIES = ['critical', 'warning', 'info'];
 const REC_STATUSES = ['pending', 'approved', 'rejected', 'applied', 'failed'];
+
+// SEO Apply is refused on Vercel. Apply saves versioned CMS data, but Vercel serves the public pages as static files built at deploy time, so a saved
+// title or description never reaches the HTML that search engines and the SEO scan read: Apply, and the re-scan that should verify it, do not work end
+// to end there. Only the apply route is refused; scanning, issues, recommendations, approve/reject, history and the CMS editor are unchanged.
+// There is deliberately NO environment switch to turn this back on. It goes when the public HTML is rendered from the CMS.
+const APPLY_UNAVAILABLE_ON_VERCEL = 'Applying SEO recommendations is not available on Vercel yet. The public pages are static files built at deploy time, so a saved title or description would not appear in the HTML that search engines and the SEO scan read. Nothing was changed. You can still approve or reject recommendations and edit the site content.';
 
 /**
  * /api/admin/seo/* — mounted under the SAME admin router as everything else in server/app.js, so every
@@ -155,7 +162,7 @@ export function createSeoRouter(store, { limiter }) {
       websiteId: website.id, issueId: issueId ? +issueId : undefined,
       status: REC_STATUSES.includes(status) ? status : undefined,
       limit: Math.min(+req.query.limit || 100, 500), offset: +req.query.offset || 0,
-    }) });
+    }), applyAvailable: !onServerless() });   // lets the admin page show a note instead of an Apply button that cannot work here
   }));
 
   /** The status check at the top of each handler is only a fast path: another request can change the recommendation
@@ -187,6 +194,8 @@ export function createSeoRouter(store, { limiter }) {
 
   // APPLY: the only route that can change production content, and only for an already-approved recommendation.
   router.post('/recommendations/:id/apply', asyncH(async (req, res) => {
+    // FIRST, before the rate limiter or any read: on Vercel nothing about this request may touch a recommendation, the content or the limiter (fail closed, no override)
+    if (onServerless()) return res.status(501).json({ ok: false, reason: 'unavailable-on-vercel', error: APPLY_UNAVAILABLE_ON_VERCEL });
     if (await limiter.take(`seo-apply:${req.user.id}`, 20, 10 * 60_000)) {
       return res.status(429).json({ ok: false, error: 'Too many apply requests — please wait a few minutes.' });
     }

@@ -724,7 +724,8 @@ async function seoRecommendationsView(main) {
   const r = await api('GET', '/api/admin/seo/recommendations');
   clear(main);
   if (!r.ok) return main.append(h('p', { class: 'empty', text: 'Could not load recommendations.' }));
-  main.append(...(r.data.recommendations.length ? r.data.recommendations.map((rec) => seoRecommendationCard(rec, () => seoRecommendationsView(main))) : [h('p', { class: 'empty', text: 'No recommendations yet — request one from an issue on the Issues tab.' })]));
+  const applyAvailable = r.data.applyAvailable === true;   // fail closed: anything but an explicit true (e.g. on Vercel) shows no Apply button
+  main.append(...(r.data.recommendations.length ? r.data.recommendations.map((rec) => seoRecommendationCard(rec, () => seoRecommendationsView(main), applyAvailable)) : [h('p', { class: 'empty', text: 'No recommendations yet — request one from an issue on the Issues tab.' })]));
 }
 /** Phase 3 Step 2: a small read-only badge showing whether the NEXT scan after this recommendation was
  *  applied found its originating issue still there. Only shown once a recommendation is 'applied' — nothing
@@ -737,7 +738,7 @@ function seoVerificationBadge(rec) {
   return h('span', { class: `pill ${cls}`, text: label });
 }
 
-function seoRecommendationCard(rec, reload) {
+function seoRecommendationCard(rec, reload, applyAvailable) {
   const approveBtn = h('button', { class: 'btn btn--sm btn--primary', type: 'button', text: 'Approve' });
   const rejectBtn = h('button', { class: 'btn btn--sm', type: 'button', text: 'Reject' });
   const applyBtn = h('button', { class: 'btn btn--sm btn--primary', type: 'button', text: 'Apply' });
@@ -747,6 +748,7 @@ function seoRecommendationCard(rec, reload) {
     if (!confirm(`Apply this ${rec.type} change to the live site now? This is saved with full version history and can be rolled back from Site content → History.`)) return;
     const x = await api('POST', `/api/admin/seo/recommendations/${rec.id}/apply`);
     if (!x.ok) {
+      if (x.status === 501 && x.data.reason === 'unavailable-on-vercel') return toast(x.data.error, true);   // not a target problem: Apply is switched off on Vercel
       // a 501 on a title/description recommendation can only be a refused TARGET (another site, or not the home page) — those two types are supported
       const manual = rec.type === 'title' || rec.type === 'description'
         ? 'This recommendation is not about this site\'s home page, so it cannot be applied automatically — the site-wide title and description only take home-page recommendations.'
@@ -763,7 +765,8 @@ function seoRecommendationCard(rec, reload) {
     h('p', { class: 'msg', text: rec.proposed_value }),
     h('p', { class: 'meta', text: rec.reasoning }),
     rec.status === 'failed' ? h('p', { class: 'meta', text: 'This recommendation can no longer be applied. A fresh recommendation may be needed — request one from an issue on the Issues tab.' }) : null,
-    h('div', { class: 'row' }, rec.status === 'pending' ? [approveBtn, rejectBtn] : null, rec.status === 'approved' ? applyBtn : null));
+    h('div', { class: 'row' }, rec.status === 'pending' ? [approveBtn, rejectBtn] : null, rec.status === 'approved' && applyAvailable ? applyBtn : null),
+    rec.status === 'approved' && !applyAvailable ? h('p', { class: 'meta', text: 'Applying is not available on Vercel yet: the public pages are static files, so a saved title or description would not reach the HTML that search engines and the SEO scan read. You can still approve or reject recommendations.' }) : null);
 }
 
 /* ── History: past scans ── */
