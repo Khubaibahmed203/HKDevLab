@@ -5,14 +5,14 @@
  * runs in Node and in the browser — same pattern as content/schema.js.
  */
 export const SITE_NAME = 'HK DevLab';
-export const DEFAULT_ORIGIN = 'https://hkdevlab.com';
+export const DEFAULT_ORIGIN = 'https://www.hkdevlab.com';
 export const OG_IMAGE_PATH = '/brand/og.jpg';
 
 export const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /** The production origin, with an optional override (e.g. PUBLIC_URL) for a self-hosted deployment under a
  *  different domain. Deliberately NOT derived from the current request's host — a preview/staging deployment
- *  must still declare hkdevlab.com as canonical, never its own throwaway URL. */
+ *  must still declare www.hkdevlab.com as canonical, never its own throwaway URL. */
 export function siteOrigin(override) {
   const raw = String(override || DEFAULT_ORIGIN).trim().replace(/\/+$/, '');
   return raw || DEFAULT_ORIGIN;

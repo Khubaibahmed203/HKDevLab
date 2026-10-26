@@ -52,7 +52,7 @@ for (const t of ['missing-title', 'missing-description', 'missing-canonical', 'm
 }
 ok('a badly broken page scores low', scoreFromIssues(brokenIssues) < 40, String(scoreFromIssues(brokenIssues)));
 
-const clean = analyzeHomepage(html, { robotsTxt: 'User-agent: *\nAllow: /\nSitemap: https://hkdevlab.com/sitemap.xml', sitemapExists: true, origin: DEFAULT_ORIGIN });
+const clean = analyzeHomepage(html, { robotsTxt: 'User-agent: *\nAllow: /\nSitemap: https://www.hkdevlab.com/sitemap.xml', sitemapExists: true, origin: DEFAULT_ORIGIN });
 const cleanCritical = clean.filter((i) => i.severity === 'critical');
 ok('the real, fully-injected homepage has no critical findings', cleanCritical.length === 0, JSON.stringify(cleanCritical));
 

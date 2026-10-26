@@ -118,7 +118,7 @@ The homepage's `<title>`, canonical, Open Graph, Twitter and JSON-LD tags are al
 `content.seo` (and `content.lab.services`/`content.contact.email`) the CMS already edits, by one shared function
 (`content/seo.js`'s `injectSeo()`) — the Node-server path renders it into the HTML before sending, and
 `src/render.js` keeps the live DOM in sync client-side too, so nothing needs the CMS content twice. The
-production origin (`https://hkdevlab.com` by default) comes from `PUBLIC_URL`, the same setting used for Google
+production origin (`https://www.hkdevlab.com` by default) comes from `PUBLIC_URL`, the same setting used for Google
 sign-in — never hardcoded per-tag, and never guessed from the request host, so a preview/staging deployment
 still declares the real production URL as canonical.
 

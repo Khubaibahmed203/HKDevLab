@@ -122,11 +122,11 @@ ok('test admin created', r.status === 201, JSON.stringify(r.data));
 
 // seed a controlled issue directly through the store — deterministic, no dependency on a live crawl's exact findings
 // same domain GET /recommendations (via homeWebsite() -> DEFAULT_ORIGIN, since PUBLIC_URL is unset here) will resolve to
-const website = await store.ensureWebsite('hkdevlab.com', 'HK DevLab');
-const auditRow = await store.createAudit(website.id, { baseUrl: 'https://hkdevlab.com' });
+const website = await store.ensureWebsite('www.hkdevlab.com', 'HK DevLab');
+const auditRow = await store.createAudit(website.id, { baseUrl: 'https://www.hkdevlab.com' });
 // Recommendation verification only speaks for a page that the verifying audit actually observed (fetched successfully, as HTML),
 // so the seeded issues belong to a real crawled page, and each "next" audit below observes that page the same way.
-const observePage = (auditId) => store.upsertPage({ websiteId: website.id, url: 'https://hkdevlab.com/', finalUrl: 'https://hkdevlab.com/', statusCode: 200, contentType: 'text/html', title: 'Existing Page Title', auditId });
+const observePage = (auditId) => store.upsertPage({ websiteId: website.id, url: 'https://www.hkdevlab.com/', finalUrl: 'https://www.hkdevlab.com/', statusCode: 200, contentType: 'text/html', title: 'Existing Page Title', auditId });
 const seedPageId = await observePage(auditRow.id);
 await store.createIssues(website.id, auditRow.id, [
   { type: 'title-length', severity: 'warning', detail: 'Title is 90 characters.', pageId: seedPageId },
@@ -176,7 +176,7 @@ const auditCountBeforeVerify = (await store.listAudits(website.id, 100)).length;
 await new Promise((res2) => setTimeout(res2, 5));   // guarantee the next audit's started_at strictly postdates recId's applied_at
 
 // resolved: recId's own issue (title-length on the same page) is gone by the next complete audit
-const auditResolved = await store.createAudit(website.id, { baseUrl: 'https://hkdevlab.com' });
+const auditResolved = await store.createAudit(website.id, { baseUrl: 'https://www.hkdevlab.com' });
 await observePage(auditResolved.id);
 await store.createIssues(website.id, auditResolved.id, [{ type: 'description-length', severity: 'warning', detail: 'still short', pageId: seedPageId }]);   // a different issue, not title-length
 await store.finishAudit(auditResolved.id, { score: 95, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
@@ -190,7 +190,7 @@ const recStill = await store.createRecommendation({ websiteId: website.id, issue
 await store.setRecommendationStatus(recStill.id, 'approved', { reviewedBy: 'rec-test@example.com' });
 await store.setRecommendationStatus(recStill.id, 'applied', { applied: true });
 await new Promise((res2) => setTimeout(res2, 5));
-const auditStill = await store.createAudit(website.id, { baseUrl: 'https://hkdevlab.com' });
+const auditStill = await store.createAudit(website.id, { baseUrl: 'https://www.hkdevlab.com' });
 await observePage(auditStill.id);
 await store.createIssues(website.id, auditStill.id, [{ type: 'description-length', severity: 'warning', detail: 'still short', pageId: seedPageId }]);
 await store.finishAudit(auditStill.id, { score: 95, status: 'complete', summary: '1 issue', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
@@ -203,7 +203,7 @@ const recUnknown = await store.createRecommendation({ websiteId: website.id, iss
 await store.setRecommendationStatus(recUnknown.id, 'approved', { reviewedBy: 'rec-test@example.com' });
 await store.setRecommendationStatus(recUnknown.id, 'applied', { applied: true });
 await new Promise((res2) => setTimeout(res2, 5));
-const auditUnknown = await store.createAudit(website.id, { baseUrl: 'https://hkdevlab.com' });
+const auditUnknown = await store.createAudit(website.id, { baseUrl: 'https://www.hkdevlab.com' });
 await store.finishAudit(auditUnknown.id, { score: 100, status: 'complete', summary: 'ok', pagesCrawled: 1, errorsCount: 0, durationMs: 5 });
 await verifyAppliedRecommendations(store, website.id, auditUnknown.id);
 const verifiedUnknown = await store.getRecommendation(recUnknown.id);

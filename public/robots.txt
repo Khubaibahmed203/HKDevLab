@@ -3,4 +3,4 @@ Allow: /
 Disallow: /admin
 Disallow: /api/
 
-Sitemap: https://hkdevlab.com/sitemap.xml
+Sitemap: https://www.hkdevlab.com/sitemap.xml
