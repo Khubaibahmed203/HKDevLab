@@ -184,9 +184,8 @@ export const CASE_STUDIES = [
       ['Built with', 'Next.js, hosted on Vercel'],
     ],
     liveUrl: 'https://its4u.vercel.app',
-    // A screenshot shown under the facts, e.g. '/assets/projects/its4u-vercel-app-preview.webp'. Left empty for now: that file shows an
-    // older design of the site — refresh it with `npm run capture-project-previews`, check it, then put its path back here.
-    screenshot: '',
+    // Shown under the facts. Refresh it with `npm run capture-project-previews -- --only its4u` when the site's design changes.
+    screenshot: '/assets/projects/its4u-vercel-app-preview.webp',
     body: [
       lead('The challenge.', 'ITS4U Mobiles sells new and used iPhones and Android phones across five branches. Customers need to see what\'s in stock, understand which phones will work with their SIM, and order without visiting every branch.'),
       h2('What we built'),
