@@ -91,9 +91,16 @@ export function sanitizeContent(input) {
   return errors.length ? { errors } : { value };
 }
 
-/** Fills in any section a stored document lacks (e.g. after an upgrade) from the defaults. */
+/** Fills in any section a stored document lacks (e.g. after an upgrade) from the defaults — and, inside a stored section,
+ *  any field it lacks (a field added by an upgrade, such as contact.whatsapp). Never replaces anything that was saved:
+ *  a field that exists in the stored section, even an empty one, is kept exactly as it is. */
 export function withDefaults(stored) {
   const out = { ...DEFAULT_CONTENT };
-  for (const k of Object.keys(DEFAULT_CONTENT)) if (stored && typeof stored[k] === 'object' && stored[k] !== null) out[k] = stored[k];
+  for (const k of Object.keys(DEFAULT_CONTENT)) {
+    const s = stored?.[k];
+    if (!s || typeof s !== 'object') continue;
+    const d = DEFAULT_CONTENT[k];
+    out[k] = Array.isArray(s) || !d || typeof d !== 'object' || Array.isArray(d) ? s : { ...d, ...s };
+  }
   return out;
 }

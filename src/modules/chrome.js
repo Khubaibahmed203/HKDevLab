@@ -23,7 +23,9 @@ export function initChrome({ lenis, reduce }) {
   // active link per section
   const links = $$('.hdr__nav a[data-nav]');
   links.forEach((a) => {
-    const target = $(a.getAttribute('href'));
+    const href = a.getAttribute('href') || '';
+    if (!href.startsWith('#')) return;            // a link to another page (/about, /blog) has no section here
+    const target = $(href);
     if (!target) return;
     ScrollTrigger.create({
       trigger: target, start: 'top 55%', end: 'bottom 55%',

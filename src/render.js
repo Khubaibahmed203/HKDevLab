@@ -105,6 +105,7 @@ export function applyContent(c) {
   /* hero */
   const hero = c.hero;
   setText('#heroEyebrow span', hero.eyebrow);
+  if (hero.h1) setText('#heroH1', hero.h1);
   ['web', 'ai', 'soft', 'sol'].forEach((k, i) => setText(`.chip--${k} span`, `•${hero.chips[i] ?? ''}•`));
   setText('#heroLede', hero.lede);
   const [primary, secondary] = $$('#heroCta a');
@@ -122,6 +123,7 @@ export function applyContent(c) {
   $('#statement')?.setAttribute('aria-label', lab.statement.replace(/\*/g, ''));
   const words = $('#statementWords');
   words.replaceChildren(...lab.statement.split(/\*([^*]+)\*/).map((part, i) => (i % 2 ? h('em', { text: part }) : document.createTextNode(part))));
+  const intro = $('#labIntro'); if (intro) { intro.textContent = lab.intro || ''; intro.hidden = !lab.intro; }
   setText('.universe__cap .eyebrow', lab.stackEyebrow);
   set($('.universe__cap h3'), lines(lab.stackTitle));
   set($('#tiles'), ...lab.tiles.map((t, i) => {
@@ -152,6 +154,7 @@ export function applyContent(c) {
   setText('.who > .eyebrow', c.who.eyebrow);
   const items = c.who.items;
   set($('.marquee__track'), ...[0, 1].flatMap((dup) => items.map((t) => h('li', { text: t, 'aria-hidden': dup ? 'true' : null }))));
+  const whoLine = $('#whoLine'); if (whoLine) { whoLine.textContent = c.who.line || ''; whoLine.hidden = !c.who.line; }
 
   /* contact */
   const ct = c.contact;

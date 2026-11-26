@@ -13,6 +13,7 @@ import { DEFAULT_CONTENT, sanitizeContent, withDefaults } from './content.js';
 import { createSeoRouter } from './seo/routes.js';
 import { injectSeo } from '../content/seo.js';
 import { publicContent } from '../content/visibility.js';
+import { SUBPAGE_PATHS } from '../content/site.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = resolve(root, 'dist');
@@ -264,12 +265,22 @@ export async function createApp() {
     app.get('/index.html', (req, res) => res.redirect(302, '/'));
     app.use(express.static(dist, {
       index: false,
+      redirect: false,                               // a folder such as dist/about/ is a page (routed below), never a "/about → /about/" redirect
       setHeaders: (res, file) => res.set('Cache-Control', /[\\/]assets[\\/](?!projects[\\/])/.test(file) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'),
     }));
     app.get('/', asyncH(async (req, res) => {
       const s = await site();
       res.set('Cache-Control', 'no-cache').type('html').send(renderIndex(s));
     }));
+    // the content pages (services, about, case studies, blog): static HTML built from content/site.js. Only the listed paths are
+    // served, from their built file; /about/ → /about so each page has one address (the one its canonical names).
+    for (const path of SUBPAGE_PATHS) {
+      const file = resolve(dist, `.${path}`, 'index.html');
+      app.get(path, (req, res, next) => {                  // Express matches /about/ here too (non-strict routing)
+        if (req.path.endsWith('/')) return res.redirect(301, path);
+        return existsSync(file) ? res.set('Cache-Control', 'public, max-age=3600').sendFile(file) : next();
+      });
+    }
   }
   app.use((req, res) => res.status(404).type('text').send('Not found'));
   app.use((err, req, res, next) => {                              // bad JSON, oversize body…

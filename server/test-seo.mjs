@@ -36,7 +36,13 @@ const ldMatch = html.match(/<script type="application\/ld\+json" id="ld-json">([
 const ld = ldMatch && JSON.parse(ldMatch[1]);
 ok('JSON-LD parses and has the right shape', ld && ld['@context'] === 'https://schema.org' && ld['@type'] === 'ProfessionalService' && ld.url === `${DEFAULT_ORIGIN}/`);
 ok('JSON-LD serviceType comes from content.lab.services, not invented', Array.isArray(ld.serviceType) && ld.serviceType.length === DEFAULT_CONTENT.lab.services.length);
-ok('JSON-LD carries no invented reviews/ratings/address/prices', !('review' in ld) && !('aggregateRating' in ld) && !('address' in ld) && !('priceRange' in ld));
+ok('JSON-LD carries no invented reviews/ratings/prices', !('review' in ld) && !('aggregateRating' in ld) && !('priceRange' in ld));
+{
+  const { BUSINESS, SERVICES } = await import(new URL('../content/site.js', import.meta.url).href);
+  ok('JSON-LD address, phone and founder are the verified business facts (content/site.js), not invented', ld.address?.addressLocality === BUSINESS.city && ld.address?.addressCountry === BUSINESS.countryCode && ld.telephone === BUSINESS.whatsapp && ld.founder?.name === BUSINESS.founder.name);
+  ok('JSON-LD sameAs lists only real profile URLs (no [placeholder] lines)', Array.isArray(ld.sameAs) && ld.sameAs.length > 0 && ld.sameAs.every((u) => /^https:\/\/[^\s[\]]+$/.test(u)));
+  ok('JSON-LD offer catalog links one Service per service page', ld.hasOfferCatalog?.itemListElement?.length === SERVICES.length && ld.hasOfferCatalog.itemListElement.every((o, i) => o.itemOffered.url === `${DEFAULT_ORIGIN}/services/${SERVICES[i].slug}`));
+}
 
 const escaping = injectSeo(rawHtml, { ...DEFAULT_CONTENT, seo: { ...DEFAULT_CONTENT.seo, title: 'Evil</script><script>alert(1)</script>' } }, DEFAULT_ORIGIN);
 ok('a title containing "</script>" cannot break out of the JSON-LD script tag', !/<script>alert\(1\)<\/script>/.test(escaping));
@@ -75,8 +81,8 @@ async function call(method, path, { json, headers = {}, auth = true } = {}) {
   return { status: res.status, data };
 }
 // Phase 2.1: POST /scan only queues the job now (server/seo/jobs.js) — poll GET /scans/:id until it settles.
-// The local fixture's own server is what gets crawled, so this is fast (usually done on the first poll).
-async function pollScan(id, { maxAttempts = 100, delayMs = 25 } = {}) {
+// The local fixture's own server is what gets crawled — every page the site links to (11 since the content pages were added), with the crawler's politeness pause between pages.
+async function pollScan(id, { maxAttempts = 600, delayMs = 25 } = {}) {   // up to 15s: the site has 11 pages to crawl, with the crawler's politeness pause between them
   for (let i = 0; i < maxAttempts; i++) {
     const r = await call('GET', `/api/admin/seo/scans/${id}`);
     if (r.data.audit && (r.data.audit.status === 'complete' || r.data.audit.status === 'failed')) return r;

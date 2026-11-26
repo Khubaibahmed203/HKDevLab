@@ -1,0 +1,25 @@
+# HK DevLab
+
+> HK DevLab is a digital development studio in Attock, Pakistan, building websites, web apps, AI assistants and custom software for startups and small businesses.
+
+Contact: contact@hkdevlab.com | WhatsApp: +92 324 0968723
+Process: Discover, Design, Build, Launch, Grow
+Free: 15-minute project call, website check
+
+## Services
+- [Website Development](https://www.hkdevlab.com/services/website-development): mobile-first business websites
+- [Web App Development](https://www.hkdevlab.com/services/web-app-development): dashboards, portals, booking systems, MVPs
+- [AI Assistants & Automation](https://www.hkdevlab.com/services/ai-assistants): customer chat assistants in English and Roman Urdu
+- [Custom Software](https://www.hkdevlab.com/services/custom-software): internal tools and integrations
+
+## About
+- [About HK DevLab](https://www.hkdevlab.com/about)
+- [Blog](https://www.hkdevlab.com/blog)
+
+## Work
+- [ITS4U Mobiles case study](https://www.hkdevlab.com/work/its4u-mobiles): How HK DevLab built the ITS4U Mobiles online store: a phone catalog, SIM guide, branch list, cart and order flow for a five-branch retailer around Attock.
+
+## Blog posts
+- [How to Choose a Web Developer in Pakistan: A Practical Checklist](https://www.hkdevlab.com/blog/how-to-choose-web-developer-pakistan)
+- [Website vs Instagram Page: What Does a Pakistani Small Business Need?](https://www.hkdevlab.com/blog/website-vs-instagram-page-small-business)
+- [What Can an AI Assistant Do for a Clinic, Salon or Shop in Pakistan?](https://www.hkdevlab.com/blog/ai-assistant-for-small-business-pakistan)

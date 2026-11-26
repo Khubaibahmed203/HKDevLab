@@ -16,6 +16,7 @@ const first = (w) => String(w.name).split(' ')[0];
 const webUrl = (s) => (/^https?:\/\/[^\s"'<>]+$/i.test(s || '') ? s : '');   // only real web addresses ever become a link
 const liveHref = (w) => webUrl(w.liveUrl);          // the project's real landing page — always the admin-saved address, never hardcoded here
 const gitHref = (w) => webUrl(w.githubUrl);
+const caseHref = (w) => (/^\/[\w\-/]*$/.test(w.caseUrl || '') ? w.caseUrl : '');   // a page on this site, e.g. /work/its4u-mobiles
 const techOf = (w) => (w.technologies || []).filter(Boolean).join(' · ');
 const hostPath = (u) => { try { const x = new URL(u); return x.host + (x.pathname === '/' && !x.search ? '' : x.pathname) + x.search; } catch { return ''; } };   // project.vercel.app/products
 const lock = '<svg class="mock__lock" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6z"/></svg>';
@@ -56,7 +57,7 @@ export function buildWork(items) {
     const cap = `<div class="slide__cap"><span class="work__idx"><b>${String(i + 1).padStart(2, '0')}</b></span><h3>${esc(w.name)}</h3><p>${esc(w.meta)}</p>${w.description ? `<p class="slide__desc">${esc(w.description)}</p>` : ''}${tech ? `<p class="slide__tech">${esc(tech)}</p>` : ''}${href ? '<span class="btn btn--ghost btn--sm">View live <span aria-hidden="true">→</span></span>' : ''}</div>`;
     return `<li class="slide" data-i="${i}">${href
       ? `<a class="slide__link" href="${esc(href)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(w.name)} — view live site (opens in a new tab)">${mock}${cap}</a>`
-      : mock + cap}${git ? `<a class="slide__git" href="${esc(git)}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>` : ''}</li>`;
+      : mock + cap}${git ? `<a class="slide__git" href="${esc(git)}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>` : ''}${caseHref(w) ? `<a class="slide__case" href="${esc(caseHref(w))}">Read the case study →</a>` : ''}</li>`;
   }).join('');
   $('#workTot').textContent = String(WORK.length).padStart(2, '0');
   sizeUnits();
@@ -102,15 +103,17 @@ export function workScene() {
       shown = front;
       const w = WORK[front];
       $('#workIdx').textContent = String(front + 1).padStart(2, '0');
-      gsap.fromTo('#workName, #workMeta, #workDesc, #workTech, #workLive, #workGit', { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.06, ease: 'expo.out', overwrite: true });
+      gsap.fromTo('#workName, #workMeta, #workDesc, #workTech, #workLive, #workGit, #workCase', { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, stagger: 0.06, ease: 'expo.out', overwrite: true });
       const href = liveHref(w), git = gitHref(w), tech = techOf(w);
-      for (const [a, to] of [[$('#workNameLink'), href], [$('#workLive'), href], [$('#workGit'), git]]) { if (to) a.href = to; else a.removeAttribute('href'); }
+      const cs = caseHref(w);
+      for (const [a, to] of [[$('#workNameLink'), href], [$('#workLive'), href], [$('#workGit'), git], [$('#workCase'), cs]]) { if (!a) continue; if (to) a.href = to; else a.removeAttribute('href'); }
       $('#workNameLink').textContent = w.name;
       $('#workMeta').textContent = w.meta;
       $('#workDesc').textContent = w.description || '';
       $('#workTech').textContent = tech;
       $('#workDesc').hidden = !w.description; $('#workTech').hidden = !tech;
       $('#workLive').hidden = !href; $('#workGit').hidden = !git;
+      if ($('#workCase')) $('#workCase').hidden = !cs;
     }
   }
 

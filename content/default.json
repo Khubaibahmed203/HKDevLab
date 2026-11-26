@@ -1,10 +1,11 @@
 {
   "seo": {
-    "title": "HK DevLab — Web, AI & Software Solutions",
-    "description": "HK DevLab is a digital development studio that builds modern websites, web applications and custom digital experiences for startups, small businesses and growing brands."
+    "title": "HK DevLab | Web Development & AI Solutions in Attock, Pakistan",
+    "description": "HK DevLab is an Attock, Pakistan studio building websites, web apps, AI assistants and custom software for startups and small businesses."
   },
   "hero": {
     "eyebrow": "Welcome to the lab",
+    "h1": "Websites, Web Apps & AI Solutions for Pakistani Businesses",
     "chips": ["Web", "AI", "Software", "Solutions"],
     "lede": "A digital development studio building modern websites, web applications and custom digital experiences for startups and growing businesses.",
     "ctaPrimary": { "label": "Start a project", "href": "#contact" },
@@ -15,6 +16,7 @@
   "lab": {
     "eyebrow": "01 — The Lab",
     "statement": "HK DevLab turns ideas into *fast*, *responsive*, *user-friendly* products — with clean design and *reliable* development.",
+    "intro": "HK DevLab is a digital development studio based in Attock, Pakistan. We build modern websites, web applications, AI assistants and custom software for startups, small businesses, entrepreneurs and personal brands across Pakistan. Every project follows one clear process: Discover, Design, Build, Launch and Grow.",
     "stackEyebrow": "Our stack",
     "stackTitle": "One lab.\nEvery layer.",
     "tiles": [
@@ -82,27 +84,32 @@
   },
   "work": {
     "eyebrow": "03 — Work",
-    "title": "Selected concepts",
-    "note": "Live landing pages — click a project to open it in a new tab.",
+    "title": "Selected work",
+    "note": "A live client project — open the site, or read the case study.",
     "items": [
-      { "name": "ITS4U", "meta": "Website · Tech retail", "featured": true, "published": true, "kind": "live", "description": "A cinematic storefront for Apple devices and mobile accessories, with a working cart and checkout demo.", "technologies": ["React", "Vite", "GSAP"], "liveUrl": "https://its4u.vercel.app/", "githubUrl": "", "preview": "/assets/projects/its4u-vercel-app-preview.webp" },
-      { "name": "Khubaib Ahmed", "meta": "Website · Developer portfolio", "featured": true, "published": true, "kind": "live", "description": "A scroll-driven portfolio whose hero video follows the cursor — web, app and AI automation work.", "technologies": ["HTML", "CSS", "JavaScript", "GSAP"], "liveUrl": "https://khubaib-portfolio-brown.vercel.app/", "githubUrl": "", "preview": "/assets/projects/khubaib-portfolio-brown-vercel-app-preview.webp" }
+      { "name": "ITS4U Mobiles", "meta": "Website · Mobile phone retail, Attock", "featured": true, "published": true, "kind": "live", "description": "An online store for a phone retailer with five branches around Attock: catalog, SIM guide, branches, cart and order flow.", "technologies": ["Next.js", "Vercel"], "liveUrl": "https://its4u.vercel.app/", "githubUrl": "", "caseUrl": "/work/its4u-mobiles", "preview": "/assets/projects/its4u-vercel-app-preview.webp" }
     ]
   },
   "who": {
     "eyebrow": "04 — Built for",
-    "items": ["Startups", "Small businesses", "Entrepreneurs", "Personal brands", "Growing companies"]
+    "items": ["Startups", "Small businesses", "Entrepreneurs", "Personal brands", "Growing companies"],
+    "line": "We work with shops, clinics, restaurants, salons, tutors, service businesses and founders across Pakistan, and with clients abroad who want a reliable development partner."
   },
   "contact": {
     "eyebrow": "05 — Contact",
     "title": "Let's build\nwhat's next.",
     "lede": "Tell us about your idea, your business or the problem you want to solve. We'll reply with honest next steps — no jargon, no pressure.",
     "email": "contact@hkdevlab.com",
-    "socials": [],
-    "location": "",
+    "whatsapp": "+92 324 0968723",
+    "socials": [
+      { "label": "Instagram", "href": "https://www.instagram.com/hkdevlab/" },
+      { "label": "Facebook", "href": "https://www.facebook.com/profile.php?id=61594621041246" }
+    ],
+    "location": "HK DevLab — Attock, Pakistan",
+    "offer": "Free 15-minute call or free website check — just send a message.",
     "formTypes": ["A new website", "A web application", "AI / automation", "Custom software", "Not sure yet"]
   },
   "footer": {
-    "copyright": "HK DevLab. All rights reserved."
+    "copyright": "HK DevLab · Web, AI & Software Studio · Attock, Pakistan"
   }
 }
