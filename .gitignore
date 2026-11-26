@@ -2,6 +2,12 @@
 node_modules/
 dist/
 
+# content pages, generated from content/site.js by scripts/generate-pages.mjs (edit that file, not these)
+/services/
+/about/
+/work/
+/blog/
+
 # SECRETS and local state — never commit these
 .env
 .env.*

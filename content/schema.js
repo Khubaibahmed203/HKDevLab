@@ -92,6 +92,7 @@ export const SCHEMA = [
     key: 'hero', label: 'Hero (top of page)',
     fields: [
       text('eyebrow', 'Small line above the logo', { max: 60 }),
+      text('h1', 'Main heading (H1, under the logo)', { max: 90, help: 'The page\'s one H1: say what you do and for whom. The animated logo stays as it is.' }),
       list('chips', 'Floating tags (exactly 4)', { max: 20, minItems: 4, maxItems: 4 }),
       area('lede', 'Intro paragraph', { max: 300 }),
       link('ctaPrimary', 'Main button'),
@@ -105,6 +106,7 @@ export const SCHEMA = [
     fields: [
       text('eyebrow', 'Section label', { max: 50 }),
       area('statement', 'Big statement', { max: 300, help: 'Put *asterisks* around words to highlight them in blue.' }),
+      area('intro', 'Who we are (paragraph under the statement)', { max: 400, optional: true, help: 'Plain words: who you are, where you are, what you build, for whom.' }),
       text('stackEyebrow', 'Stack label', { max: 50 }),
       lines('stackTitle', 'Stack headline'),
       objlist('tiles', 'Tech stack tiles (they fly past as you scroll)', [text('text', 'Name', { max: 30 }), { k: 'hot', label: 'Highlight', type: 'bool' }], { minItems: 3, maxItems: 16, itemLabel: 'text' }),
@@ -156,6 +158,7 @@ export const SCHEMA = [
         list('technologies', 'Technologies', { max: 24, maxItems: 8, when: LIVE, help: 'Up to 8, e.g. React, Node.js, PostgreSQL.' }),
         weburl('liveUrl', 'Live website URL', { when: LIVE, livePreview: true, help: 'The full address, e.g. https://example-project.vercel.app/. The card shows a screenshot of this page (generated with "npm run capture-project-previews" — there is nothing to upload). "View live", the card and its name open it in a new tab.' }),
         weburl('githubUrl', 'GitHub URL (optional)', { optional: true, when: LIVE, help: 'Shown as a small "GitHub" link next to "View live". Leave empty to hide it.' }),
+        href('caseUrl', 'Case study page (optional)', { optional: true, when: LIVE, help: 'The page on this site about the project, e.g. /work/its4u-mobiles. Shown as a "Read the case study" link. Leave empty to hide it.' }),
         text('url', 'Web address shown in the window', { max: 60, when: { kind: MOCKS } }),
         { k: 'a', label: 'Colour 1', type: 'color', when: { kind: MOCKS } },
         { k: 'b', label: 'Colour 2', type: 'color', when: { kind: MOCKS } },
@@ -174,6 +177,7 @@ export const SCHEMA = [
     fields: [
       text('eyebrow', 'Section label', { max: 50 }),
       list('items', 'Who you work with', { max: 40, minItems: 2, maxItems: 10 }),
+      area('line', 'One line under the band (optional)', { max: 240, optional: true }),
     ],
   },
   {
@@ -183,8 +187,10 @@ export const SCHEMA = [
       lines('title', 'Headline', { help: 'The last line is shown in blue.' }),
       area('lede', 'Intro paragraph', { max: 300 }),
       text('email', 'Public email address', { max: 120, help: 'Shown on the site. Enquiries are emailed to the address set on the server (MAIL_TO).' }),
+      text('whatsapp', 'WhatsApp number (optional)', { max: 30, optional: true, help: 'With the country code, e.g. +92 324 0968723. Shown as a WhatsApp chat link.' }),
       objlist('socials', 'Social links', [text('label', 'Name', { max: 30 }), href('href', 'Address')], { maxItems: 8, optional: true, itemLabel: 'label' }),
       text('location', 'Location line (optional)', { max: 80, optional: true }),
+      text('offer', 'Offer line under the contact details (optional)', { max: 160, optional: true }),
       list('formTypes', 'Options in the "What do you need?" menu', { max: 50, minItems: 1, maxItems: 10 }),
     ],
   },

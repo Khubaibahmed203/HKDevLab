@@ -46,7 +46,7 @@ ok('test admin created', r.status === 201, JSON.stringify(r.data));
 /* ───── validation ───── */
 let doc = await adminDoc();
 const seeded = doc.work.items.length;
-ok('the seeded concepts are the two real projects, both live', seeded === 2 && doc.work.items.every((i) => i.kind === 'live' && /^https:\/\//.test(i.liveUrl)));
+ok('the seeded work is the real client project (ITS4U Mobiles), live, linked to its case study page', seeded === 1 && doc.work.items.every((i) => i.kind === 'live' && /^https:\/\//.test(i.liveUrl)) && doc.work.items[0].caseUrl === '/work/its4u-mobiles');
 const bad = async (label, patch, path) => { const d = structuredClone(doc); d.work.items.push(project(patch)); const x = await save(d); ok(label, x.status === 400 && x.data.errors.some((e) => e.path.includes(path)), `${x.status} ${JSON.stringify(x.data.errors)}`); };
 await bad('a project without a name is refused', { name: '' }, 'name');
 await bad('a project without a live URL is refused', { liveUrl: '' }, 'liveUrl');

@@ -14,11 +14,15 @@ export function initContact(contact) {
     const li = document.createElement('li'); li.append(a); return li;
   };
   const items = [];
-  if (SITE.email) items.push(link(`mailto:${SITE.email}`, SITE.email));
-  SITE.socials.forEach((s) => items.push(link(s.href, s.label, /^https?:/i.test(s.href))));
   if (SITE.location) { const li = document.createElement('li'); const sp = document.createElement('span'); sp.className = 'contact__loc'; sp.textContent = SITE.location; li.append(sp); items.push(li); }
+  if (SITE.email) items.push(link(`mailto:${SITE.email}`, `Email: ${SITE.email}`));
+  const wa = String(SITE.whatsapp || '').replace(/\D/g, '');
+  if (wa.length >= 8) { const a = link(`https://wa.me/${wa}`, `WhatsApp: ${SITE.whatsapp}`, true); a.firstChild.rel = 'noopener noreferrer'; items.push(a); }
+  (SITE.socials || []).forEach((s) => items.push(link(s.href, s.label, /^https?:/i.test(s.href))));
   list.replaceChildren(...items);
   if (!items.length) list.remove();
+  const offer = $('#contactOffer');
+  if (offer) { offer.textContent = SITE.offer || ''; offer.hidden = !SITE.offer; }
 
   const form = $('#form');
   const status = $('#formStatus');
